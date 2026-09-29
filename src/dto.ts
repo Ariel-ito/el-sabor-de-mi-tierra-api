@@ -119,6 +119,10 @@ export class RoundPatchDto {
   closesAt?: string;
 }
 export class ItemDto {
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsUUID()
+  id?: string;
   @ApiProperty() @IsUUID() productId!: string;
   @ApiProperty() @IsUUID() supplierId!: string;
   @ApiProperty() @Matches(QUANTITY) quantity!: string;

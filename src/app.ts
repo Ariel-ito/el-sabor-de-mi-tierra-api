@@ -37,7 +37,13 @@ import {
   RoundPatchDto,
   SupplierDto,
 } from "./dto";
-import { orderInclude, purchaseSummary, serializeOrder, money } from "./math";
+import {
+  orderInclude,
+  purchaseSummary,
+  serializeOrder,
+  money,
+  statistics,
+} from "./math";
 import { hashPassword, hashToken, newToken, verifyPassword } from "./security";
 @Injectable()
 export class Db extends PrismaClient {}
@@ -309,13 +315,17 @@ class BusinessController {
       const round = await this.lockRound(tx, body.roundId);
       if (round.status !== "OPEN")
         throw new ConflictException("El ciclo está cerrado");
-      await this.checkItems(tx, body.items);
+      if (body.items.some((i) => i.id))
+        throw new BadRequestException(
+          "Un pedido nuevo no admite IDs de líneas existentes",
+        );
+      const items = await this.costItems(tx, body.items);
       const after = await tx.order.create({
         data: {
           roundId: body.roundId,
           customerId: body.customerId,
           notes: body.notes,
-          items: { create: body.items },
+          items: { create: items },
         },
         include: orderInclude,
       });
@@ -331,9 +341,16 @@ class BusinessController {
       return serializeOrder(after);
     });
   }
-  private async checkItems(
+  private async costItems(
     tx: Prisma.TransactionClient,
-    items: { productId: string }[],
+    items: {
+      id?: string;
+      productId: string;
+      supplierId: string;
+      quantity: string;
+      unitPrice: string;
+    }[],
+    previous: any[] = [],
   ) {
     const ids = [...new Set(items.map((i) => i.productId))];
     const products = await tx.product.findMany({
@@ -341,6 +358,30 @@ class BusinessController {
     });
     if (products.length !== ids.length)
       throw new BadRequestException("Producto inexistente o inactivo");
+    const used = new Set<string>();
+    return items.map(({ id, ...item }) => {
+      const old = id
+        ? previous.find((p) => p.id === id)
+        : previous.find(
+            (p) =>
+              !used.has(p.id) &&
+              p.productId === item.productId &&
+              p.supplierId === item.supplierId,
+          );
+      if (id && (!old || used.has(id)))
+        throw new BadRequestException("Línea de pedido inválida o duplicada");
+      if (old) used.add(old.id);
+      const preserve =
+        old &&
+        old.productId === item.productId &&
+        old.supplierId === item.supplierId;
+      return {
+        ...item,
+        estimatedUnitCost: preserve
+          ? old.estimatedUnitCost
+          : products.find((p) => p.id === item.productId)!.estimatedCost,
+      };
+    });
   }
   @Patch("orders/:id") patchOrder(
     @Param("id", ParseUUIDPipe) id: string,
@@ -361,7 +402,9 @@ class BusinessController {
         throw new ConflictException(
           "El pedido cambió; recarga antes de editar",
         );
-      if (body.items) await this.checkItems(tx, body.items);
+      const items = body.items
+        ? await this.costItems(tx, body.items, before.items)
+        : undefined;
       const changed = await tx.order.updateMany({
         where: { id, version: body.version },
         data: {
@@ -377,7 +420,7 @@ class BusinessController {
       if (body.items) {
         await tx.orderItem.deleteMany({ where: { orderId: id } });
         await tx.orderItem.createMany({
-          data: body.items.map((item) => ({ ...item, orderId: id })),
+          data: items!.map((item) => ({ ...item, orderId: id })),
         });
       }
       const after = await tx.order.findUniqueOrThrow({
@@ -387,6 +430,13 @@ class BusinessController {
       await this.audit(tx, req.actor.id, "Order", id, "UPDATE", before, after);
       return serializeOrder(after);
     });
+  }
+  @Get("statistics") async stats() {
+    const [rounds, orders] = await this.db.$transaction([
+      this.db.round.findMany({ orderBy: { opensAt: "desc" } }),
+      this.db.order.findMany({ include: orderInclude }),
+    ]);
+    return statistics(rounds, orders);
   }
   @Get("rounds/:id/purchase-summary") async summary(
     @Param("id", ParseUUIDPipe) id: string,

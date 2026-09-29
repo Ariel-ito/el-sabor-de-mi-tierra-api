@@ -99,6 +99,7 @@ model OrderItem {
   supplier   Supplier @relation(fields: [supplierId], references: [id])
   quantity   Decimal  @db.Decimal(12, 3)
   unitPrice  Decimal  @db.Decimal(12, 2)
+  estimatedUnitCost Decimal? @db.Decimal(12, 2)
 }
 
 model AuditLog {

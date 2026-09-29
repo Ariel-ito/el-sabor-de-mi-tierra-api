@@ -17,7 +17,7 @@ def good(method,path,payload=None,token=None):
     status,data=req(method,path,payload,token)
     assert status in (200,201), (method,path,status,data)
     return data
-for path in ['/customers','/suppliers','/products','/rounds','/orders']:
+for path in ['/customers','/suppliers','/products','/rounds','/orders','/statistics']:
     check(req('GET',path)[0]==401,'private '+path)
 user=good('POST','/auth/login',{'email':os.environ['DAIRY_TEST_EMAIL'],'password':os.environ['DAIRY_TEST_PASSWORD']})
 token=user['accessToken']; check(bool(good('GET','/auth/me',token=token)['email']),'authenticated session')
@@ -30,9 +30,11 @@ r=good('POST','/rounds',{'name':'QA Ronda '+u,'opensAt':'2026-09-28T06:00:00.000
 item={'productId':p['id'],'supplierId':s2['id'],'quantity':'0.5','unitPrice':'53.01'}
 order=good('POST','/orders',{'roundId':r['id'],'customerId':c['id'],'items':[item]},token)
 check(order['total']=='26.51','half-up rounding per line')
-good('PATCH','/products/'+p['id'],{'salePrice':'90.00'},token)
+good('PATCH','/products/'+p['id'],{'salePrice':'90.00','estimatedCost':'60.00'},token)
 orders=good('GET','/orders?roundId='+r['id'],token=token)
 check(orders[0]['items'][0]['unitPrice']=='53.01','catalog edit preserves saved sale price')
+check(orders[0]['items'][0]['estimatedUnitCost']=='53.00','catalog edit preserves saved estimated cost')
+check(orders[0]['profitability']['estimatedProfit']=='0.01','half-pound profit rounds both line totals')
 sumry=good('GET','/rounds/'+r['id']+'/purchase-summary',token=token)
 check(len(sumry['groups'])==1 and sumry['groups'][0]['supplierId']==s2['id'],'actual selected supplier grouping')
 for quantity in ['0','-0.5','0.3','1.001']:
@@ -49,6 +51,12 @@ update={'version':order['version'],'items':[{**item,'quantity':'1.5'}]}
 with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
     statuses=list(pool.map(lambda _:req('PATCH','/orders/'+order['id'],update,token)[0], range(2)))
 check(sorted(statuses)==[200,409],'concurrent edit exactly one success')
+revised=good('GET','/orders?roundId='+r['id'],token=token)[0]
+check(revised['items'][0]['estimatedUnitCost']=='53.00','quantity edit retains estimated cost')
+reports=good('GET','/statistics',token=token)
+cycle=next(x for x in reports['cycles'] if x['id']==r['id'])
+check(cycle['sales']=='79.52' and cycle['estimatedCost']=='79.50' and cycle['estimatedProfit']=='0.02','cycle profitability uses historical cost')
+check(cycle['customerCount']==1 and cycle['orderCount']==1,'cycle counts')
 good('PATCH','/rounds/'+r['id'],{'status':'CLOSED'},token)
 check(req('POST','/orders',{'roundId':r['id'],'customerId':c['id'],'items':[item]},token)[0] in (400,409),'closed round rejects new order')
 updated=good('PATCH','/rounds/'+r['id'],{'name':'Ciclo histórico '+u,'opensAt':'2026-09-01T14:00:00.000Z','closesAt':'2026-09-05T00:00:00.000Z'},token)
