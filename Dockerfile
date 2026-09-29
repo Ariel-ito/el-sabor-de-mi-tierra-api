@@ -21,4 +21,4 @@ COPY scripts ./scripts
 COPY src/security.ts ./src/security.ts
 USER node
 EXPOSE 4100
-CMD ["node", "dist/main.js"]
+CMD ["sh", "scripts/start.sh"]

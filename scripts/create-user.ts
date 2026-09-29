@@ -16,6 +16,11 @@ async function main() {
     throw new Error("Invalid email");
   const db = new PrismaClient();
   try {
+    const existing = await db.user.findUnique({ where: { email: USER_EMAIL.toLowerCase().trim() } });
+    if (existing && process.env.BOOTSTRAP_ADMIN === "1") {
+      console.log("Initial user already exists; credentials unchanged.");
+      return;
+    }
     await db.user.create({
       data: {
         email: USER_EMAIL.toLowerCase().trim(),

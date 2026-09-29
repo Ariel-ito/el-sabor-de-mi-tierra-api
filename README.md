@@ -54,3 +54,6 @@ El contenedor conserva herramientas Prisma/tsx para migrar y provisionar usuario
 Nota de dependencias: Swagger incorpora un aviso moderado sin corrección disponible en js-yaml. Esta API no acepta ni analiza YAML de usuarios y la documentación está desactivada por defecto. Revisar la actualización de Swagger cuando se publique la corrección.
 
 La cuenta inicial acordada es `admin@lacteos.com`, nombre `Administración`. Se provisiona explícitamente en cada base de datos con `npm run user:create`; su contraseña se entrega por entorno y no se incluye en el repositorio ni se crea automáticamente al arrancar.
+
+## Producción
+El contenedor aplica migraciones antes de iniciar la API. Para provisionar el administrador inicial, configurar temporalmente `BOOTSTRAP_ADMIN=1` y `USER_EMAIL`, `USER_NAME`, `USER_PASSWORD`; después del primer arranque verificado, eliminar esas cuatro variables. El provisionamiento inicial no modifica usuarios existentes. Configurar `/api/v1/health/ready` como healthcheck en Railway.
