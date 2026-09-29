@@ -1,0 +1,42 @@
+{
+  "name": "el-sabor-de-mi-tierra-api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "tsx --test test/*.test.ts",
+    "prisma:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "user:create": "tsx scripts/create-user.ts",
+    "format": "prettier --write src scripts test package.json tsconfig.json railway.json compose.yaml README.md && prisma format",
+    "test:integration": "python3 test/integration.py"
+  },
+  "engines": {
+    "node": ">=20.19 <25"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.0",
+    "@nestjs/core": "^11.1.0",
+    "@nestjs/platform-express": "^11.1.0",
+    "@nestjs/swagger": "^11.4.7",
+    "@prisma/client": "^6.19.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.2",
+    "helmet": "^8.1.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "prettier": "^3.9.9",
+    "prisma": "^6.19.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
+  }
+}

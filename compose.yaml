@@ -1,0 +1,31 @@
+name: el-sabor-de-mi-tierra
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sabor
+      POSTGRES_DB: sabor
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:55433:5432"
+    volumes:
+      - sabor_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sabor -d sabor"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql://sabor:${POSTGRES_PASSWORD}@db:5432/sabor?schema=public
+      PORT: 4100
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+    ports:
+      - "127.0.0.1:4100:4100"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "npm run db:migrate && npm start"]
+volumes:
+  sabor_pg:
