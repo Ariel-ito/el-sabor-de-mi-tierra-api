@@ -30,6 +30,7 @@ model Session {
 model Customer {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
+  phoneCountryCode String @default("+504")
   phone     String?
   notes     String?
   createdAt DateTime @default(now())
@@ -37,9 +38,13 @@ model Customer {
 }
 
 model Supplier {
+  deliveryContactName String?
+  deliveryContactPhone String?
+  deliveryContactCountryCode String @default("+504")
   id        String      @id @default(uuid()) @db.Uuid
   name      String
   region    String
+  phoneCountryCode String @default("+504")
   phone     String?
   createdAt DateTime    @default(now())
   products  Product[]

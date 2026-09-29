@@ -204,11 +204,53 @@ class BusinessController {
       },
     });
   }
+  @Patch("customers/:id") async patchCustomer(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: CustomerDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Customer" WHERE id=${id}::uuid FOR UPDATE`;
+      const before = await tx.customer.findUniqueOrThrow({ where: { id } });
+      const after = await tx.customer.update({ where: { id }, data: body });
+      await this.audit(
+        tx,
+        req.actor.id,
+        "Customer",
+        id,
+        "UPDATE",
+        before,
+        after,
+      );
+      return after;
+    });
+  }
   @Get("customers") customers() {
     return this.db.customer.findMany({ orderBy: { name: "asc" } });
   }
   @Post("customers") createCustomer(@Body() body: CustomerDto) {
     return this.db.customer.create({ data: body });
+  }
+  @Patch("suppliers/:id") async patchSupplier(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: SupplierDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Supplier" WHERE id=${id}::uuid FOR UPDATE`;
+      const before = await tx.supplier.findUniqueOrThrow({ where: { id } });
+      const after = await tx.supplier.update({ where: { id }, data: body });
+      await this.audit(
+        tx,
+        req.actor.id,
+        "Supplier",
+        id,
+        "UPDATE",
+        before,
+        after,
+      );
+      return after;
+    });
   }
   @Get("suppliers") suppliers() {
     return this.db.supplier.findMany({ orderBy: { name: "asc" } });

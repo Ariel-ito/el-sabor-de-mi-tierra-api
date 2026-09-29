@@ -23,6 +23,11 @@ export class LoginDto {
   @ApiProperty() @IsString() @MaxLength(256) password!: string;
 }
 export class CustomerDto {
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(/^\+[1-9]\d{0,3}$/)
+  phoneCountryCode?: string;
+
   @ApiProperty()
   @IsString()
   @MinLength(1)
@@ -41,6 +46,25 @@ export class CustomerDto {
   notes?: string;
 }
 export class SupplierDto {
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(/^\+[1-9]\d{0,3}$/)
+  phoneCountryCode?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(/^\+[1-9]\d{0,3}$/)
+  deliveryContactCountryCode?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(150)
+  deliveryContactName?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(50)
+  deliveryContactPhone?: string;
+
   @ApiProperty()
   @IsString()
   @MinLength(1)
