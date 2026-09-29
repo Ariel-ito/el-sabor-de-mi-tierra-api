@@ -188,3 +188,44 @@ export class OrderPatchDto {
   @Type(() => ItemDto)
   items?: ItemDto[];
 }
+
+export class PurchaseLineDto {
+  @IsUUID() productId!: string;
+  @Matches(QUANTITY) quantity!: string;
+  @Matches(MONEY) quotedUnitCost!: string;
+}
+export class PurchaseDto {
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() id?: string;
+  @IsUUID() roundId!: string;
+  @IsUUID() supplierId!: string;
+  @IsDateString({ strict: true }) orderedAt!: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => PurchaseLineDto)
+  items!: PurchaseLineDto[];
+}
+export class ReceiptLineDto {
+  @IsUUID() purchaseItemId!: string;
+  @Matches(QUANTITY) quantity!: string;
+  @Matches(MONEY) unitCost!: string;
+  @Matches(MONEY) unitDiscount!: string;
+}
+export class ReceiptDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @IsDateString({ strict: true }) receivedAt!: string;
+  @IsString() @MaxLength(150) @Matches(/\S/) invoice!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+  @Matches(MONEY) globalDiscount!: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => ReceiptLineDto)
+  items!: ReceiptLineDto[];
+}

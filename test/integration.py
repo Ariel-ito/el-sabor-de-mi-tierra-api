@@ -73,6 +73,32 @@ check(good('GET','/orders?roundId='+r['id'],token=token)[0]['id']==order['id'],'
 for patch in [{'closesAt':'2026-08-01T00:00:00Z'},{'opensAt':None},{'name':'   '},{'createdAt':'2020-01-01T00:00:00Z'}]:
     check(req('PATCH','/rounds/'+r['id'],patch,token)[0]==400,'reject invalid cycle patch '+str(patch))
 check(good('PATCH','/rounds/'+r['id'],{'status':'OPEN'},token)['status']=='OPEN','reopen edited cycle')
+check(req('GET','/purchases')[0]==401,'purchases private')
+purchase_id=str(uuid.uuid4())
+po=good('POST','/purchases',{'id':purchase_id,'roundId':r['id'],'supplierId':s1['id'],'orderedAt':'2026-09-01T12:00:00Z','items':[{'productId':p['id'],'quantity':'4','quotedUnitCost':'53'}]},token)
+check(good('POST','/purchases',{'id':purchase_id,'roundId':r['id'],'supplierId':s1['id'],'orderedAt':'2026-09-01T12:00:00Z','items':[{'productId':p['id'],'quantity':'4','quotedUnitCost':'53'}]},token)['id']==po['id'],'purchase retry idempotent')
+receipt={'id':str(uuid.uuid4()),'version':po['version'],'receivedAt':'2026-09-24T12:00:00Z','invoice':'QA-1','globalDiscount':'0','items':[{'purchaseItemId':po['items'][0]['id'],'quantity':'2','unitCost':'55','unitDiscount':'1'}]}
+received=good('POST','/purchases/'+po['id']+'/receipts',receipt,token)
+check(str(received['receipts'][0]['total'])=='108','receipt applies per-pound discount')
+prod=lambda:next(x for x in good('GET','/products',token=token) if x['id']==p['id'])
+check(prod()['estimatedCost']=='54.00' and prod()['salePrice']=='90.00','receipt changes catalog cost only')
+check(len(good('POST','/purchases/'+po['id']+'/receipts',receipt,token)['receipts'])==1,'receipt retry idempotent')
+check(good('GET','/orders?roundId='+r['id'],token=token)[0]['items'][0]['estimatedUnitCost']=='53.00','receipt preserves old order estimate')
+bad={**receipt,'id':str(uuid.uuid4()),'version':received['version'],'items':[{**receipt['items'][0],'quantity':'3'}]}
+check(req('POST','/purchases/'+po['id']+'/receipts',bad,token)[0]==400,'cannot receive beyond pending quantity')
+older={**receipt,'id':str(uuid.uuid4()),'version':received['version'],'receivedAt':'2026-09-20T12:00:00Z','invoice':'QA-OLD','globalDiscount':'2','items':[{**receipt['items'][0],'unitCost':'51','unitDiscount':'0'}]}
+received=good('POST','/purchases/'+po['id']+'/receipts',older,token)
+check(prod()['estimatedCost']=='54.00','backdated receipt cannot replace newer cost')
+history=good('GET','/products/'+p['id']+'/cost-history',token=token)
+check(len(history)==2 and str(history[0]['effectiveUnitCost'])=='50','history ordered by receipt date with global discount')
+check(req('POST','/purchases/'+po['id']+'/receipts',{**receipt,'id':str(uuid.uuid4())},token)[0]==409,'stale purchase version rejected')
+po2=good('POST','/purchases',{'roundId':r['id'],'supplierId':s1['id'],'orderedAt':'2026-09-25T12:00:00Z','items':[{'productId':p['id'],'quantity':'1','quotedUnitCost':'54'}]},token)
+r2={**receipt,'id':str(uuid.uuid4()),'version':1,'receivedAt':'2026-09-26T12:00:00Z','invoice':'QA-NEW','items':[{'purchaseItemId':po2['items'][0]['id'],'quantity':'1','unitCost':'80','unitDiscount':'0'}]}
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    results=list(pool.map(lambda _:req('POST','/purchases/'+po2['id']+'/receipts',{**r2,'id':str(uuid.uuid4())},token)[0],range(2)))
+check(sorted(results)==[201,409],'concurrent receipts cannot duplicate quantities')
+check(prod()['estimatedCost']=='80.00','latest received price becomes current cost')
+
 good('POST','/auth/logout',{},token)
 check(req('GET','/auth/me',token=token)[0]==401,'logout invalidates token')
 print(json.dumps({'passed':len(passed),'checks':passed},ensure_ascii=False,indent=2))
