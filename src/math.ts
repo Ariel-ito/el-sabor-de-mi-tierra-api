@@ -44,9 +44,7 @@ export function serializeOrder(order: any) {
     (s: Prisma.Decimal, i: any) => s.add(i.lineTotal),
     decimal(0),
   );
-  const paid = (order.payments || [])
-    .filter((p: any) => !p.voidedAt)
-    .reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), decimal(0));
+  const { paid, balance, credit } = orderBalance(order);
   const delivered = items.reduce(
     (s: Prisma.Decimal, i: any) => s.add(i.deliveredQuantity),
     decimal(0),
@@ -58,8 +56,8 @@ export function serializeOrder(order: any) {
   return {
     ...order,
     paid: money(paid),
-    balance: money(Prisma.Decimal.max(0, total.sub(paid))),
-    credit: money(Prisma.Decimal.max(0, paid.sub(total))),
+    balance: money(balance),
+    credit: money(credit),
     paymentStatus: paid.gte(total) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID",
     deliveryStatus: delivered.gte(quantity)
       ? "DELIVERED"
@@ -121,31 +119,96 @@ export function purchaseSummary(roundId: string, orders: any[]) {
   };
 }
 
+export function orderBalance(order: any) {
+  const total = order.items.reduce(
+    (s: Prisma.Decimal, i: any) => s.add(saleTotal(i)),
+    decimal(0),
+  );
+  const paid = (order.payments || [])
+    .filter((p: any) => !p.voidedAt)
+    .reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), decimal(0));
+  return {
+    paid,
+    balance: Prisma.Decimal.max(0, total.sub(paid)),
+    credit: Prisma.Decimal.max(0, paid.sub(total)),
+  };
+}
+const margin = (profit: Prisma.Decimal, sales: Prisma.Decimal) =>
+  sales.isZero() ? null : money(profit.div(sales).mul(100));
 export function metrics(orders: any[]) {
   let sales = decimal(0),
+    costedSales = decimal(0),
     cost = decimal(0),
     quantity = decimal(0),
+    collected = decimal(0),
+    outstanding = decimal(0),
+    credit = decimal(0),
     missing = 0;
-  for (const order of orders)
+  for (const order of orders) {
     for (const item of order.items) {
-      sales = sales.add(saleTotal(item));
+      const line = saleTotal(item);
+      sales = sales.add(line);
       quantity = quantity.add(item.quantity);
       if (item.estimatedUnitCost == null) missing++;
-      else cost = cost.add(lineTotal(item.quantity, item.estimatedUnitCost));
+      else {
+        costedSales = costedSales.add(line);
+        cost = cost.add(lineTotal(item.quantity, item.estimatedUnitCost));
+      }
     }
+    const b = orderBalance(order);
+    collected = collected.add(b.paid);
+    outstanding = outstanding.add(b.balance);
+    credit = credit.add(b.credit);
+  }
   const profit = sales.sub(cost);
+  // With legacy lines lacking cost, report profit only over the costed share
+  // and say how much of sales it covers; never treat missing cost as zero.
+  const partial =
+    missing && !costedSales.isZero()
+      ? {
+          sales: money(costedSales),
+          estimatedCost: money(cost),
+          estimatedProfit: money(costedSales.sub(cost)),
+          margin: margin(costedSales.sub(cost), costedSales),
+          coverage: money(costedSales.div(sales).mul(100)),
+        }
+      : null;
   return {
+    partial,
+    collected: money(collected),
+    outstanding: money(outstanding),
+    credit: money(credit),
     sales: money(sales),
     estimatedCost: missing ? null : money(cost),
     estimatedProfit: missing ? null : money(profit),
-    margin:
-      missing || sales.isZero() ? null : money(profit.div(sales).mul(100)),
+    margin: missing ? null : margin(profit, sales),
     quantity: quantity.toString(),
     orderCount: orders.length,
     customerCount: new Set(orders.map((o) => o.customerId)).size,
     averageOrder: orders.length ? money(sales.div(orders.length)) : "0.00",
     missingCostLines: missing,
   };
+}
+export function debtors(orders: any[]) {
+  const rows = new Map<string, any>();
+  for (const order of orders) {
+    const { balance } = orderBalance(order);
+    if (balance.isZero()) continue;
+    const row = rows.get(order.customerId) || {
+      id: order.customerId,
+      name: order.customer.name,
+      balance: decimal(0),
+      orderCount: 0,
+      oldestAt: order.createdAt,
+    };
+    row.balance = row.balance.add(balance);
+    row.orderCount++;
+    if (order.createdAt < row.oldestAt) row.oldestAt = order.createdAt;
+    rows.set(order.customerId, row);
+  }
+  return [...rows.values()]
+    .sort((a, b) => b.balance.comparedTo(a.balance))
+    .map((r) => ({ ...r, balance: money(r.balance) }));
 }
 export function statistics(rounds: any[], orders: any[]) {
   function rank(selected: any[], kind: "product" | "customer") {
@@ -181,6 +244,7 @@ export function statistics(rounds: any[], orders: any[]) {
       ...metrics(selected),
       products: rank(selected, "product"),
       customers: rank(selected, "customer"),
+      debtors: debtors(selected),
     };
   }
   return {
