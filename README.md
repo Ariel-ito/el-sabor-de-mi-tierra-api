@@ -15,8 +15,9 @@ Reglas de negocio acordadas: [`docs/domain-roadmap.md`](docs/domain-roadmap.md).
 - **Pagos:** abonos en `CASH` o `TRANSFER`, sin superar el saldo pendiente. Anular un pago guarda el motivo y conserva el historial. Cada encargo expone `total`, `paid`, `balance`, `credit`, `paymentStatus` (`UNPAID/PARTIAL/PAID`) y `deliveryStatus` (`ORDERED/PARTIAL/DELIVERED`), que son independientes entre sí.
 - **Lista para proveedores:** agrupa lo que falta comprar por proveedor (`pendingToBuy`), descontando lo ya reservado y lo ya pedido pero no recibido. Las líneas `STOCK` quedan fuera.
 - **Estadísticas e historial de costos:** ventas, costo y ganancia **estimados**, margen, ranking de productos y clientes, en total y por ciclo. Si alguna línea no tiene costo, `estimatedProfit` queda en `null` y `partial` da la ganancia de las líneas con costo junto con su cobertura (`coverage`, en % de las ventas); nunca se toma un costo faltante como cero. Cobranza por período: `collected`, `outstanding`, `credit` y `debtors` (saldo pendiente por cliente, de mayor a menor). El historial de costos de un producto se construye con sus lotes.
+- **Costo por ciclo y producto** (`costing` y `productCosts` en cada ciclo de `/statistics`): precio de venta, costo y margen por libra. Regla acordada en `src/costing.ts`: las libras con lote asignado usan el costo real de ese lote; las demás usan el costo promedio de compra del ciclo (mismo producto y proveedor) y, si no hubo compra, el costo estimado guardado en la línea. `costSources` indica cuántas libras salieron de cada fuente.
 
-**Todavía no existe:** gastos operativos, ganancia real por costo de lote, devoluciones o saldo a favor gestionado, datos de conservación del lote (vencimiento, temperatura) ni recordatorios.
+**Todavía no existe:** gastos operativos, ganancia real en la tarjeta de rentabilidad (sigue siendo estimada), devoluciones o saldo a favor gestionado, datos de conservación del lote (vencimiento, temperatura) ni recordatorios.
 
 ## Reglas técnicas
 

@@ -14,6 +14,7 @@ import {
 import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
+import { cycleCosts, Lot } from "./costing";
 import { RoundDto, RoundPatchDto } from "./dto";
 import { allocateStock, stockLock } from "./inventory";
 import { decimal, orderInclude, purchaseSummary, statistics } from "./math";
@@ -53,11 +54,43 @@ export class RoundsController {
     });
   }
   @Get("statistics") async stats() {
-    const [rounds, orders] = await this.db.$transaction([
+    const [rounds, orders, receipts] = await this.db.$transaction([
       this.db.round.findMany({ orderBy: { opensAt: "desc" } }),
-      this.db.order.findMany({ include: orderInclude }),
+      this.db.order.findMany({
+        include: {
+          ...orderInclude,
+          items: {
+            include: {
+              product: true,
+              supplier: true,
+              allocations: { include: { receiptItem: true } },
+            },
+          },
+        },
+      }),
+      this.db.receiptItem.findMany({
+        include: { purchaseItem: { include: { purchase: true } } },
+      }),
     ]);
-    return statistics(rounds, orders);
+    const lots: Lot[] = receipts.map((r) => ({
+      productId: r.purchaseItem.productId,
+      supplierId: r.purchaseItem.purchase.supplierId,
+      roundId: r.purchaseItem.purchase.roundId,
+      quantity: r.quantity,
+      unitCost: r.effectiveUnitCost,
+    }));
+    const result = statistics(rounds, orders);
+    return {
+      ...result,
+      cycles: result.cycles.map((c) => ({
+        ...c,
+        ...cycleCosts(
+          c.id,
+          orders.filter((o) => o.roundId === c.id),
+          lots,
+        ),
+      })),
+    };
   }
   @Get("rounds/:id/purchase-summary") async summary(
     @Param("id", ParseUUIDPipe) id: string,
