@@ -4,7 +4,8 @@ import { ValidationPipe } from "@nestjs/common";
 import helmet from "helmet";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import { json } from "express";
-import { AppModule, Errors } from "./app";
+import { AppModule } from "./app";
+import { Errors } from "./errors";
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
   const origins = (process.env.CORS_ORIGINS || "http://localhost:5173")
