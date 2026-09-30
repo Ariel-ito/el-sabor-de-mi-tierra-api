@@ -1,0 +1,124 @@
+import { BadRequestException, ConflictException } from "@nestjs/common";
+import { Prisma } from "@prisma/client";
+import { decimal } from "./math";
+// All inventory/order mutations acquire this lock before any row locks.
+// Serializes the small private workspace and prevents overselling across cycles.
+export async function stockLock(tx: Prisma.TransactionClient) {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(7300929)`;
+}
+const lotInclude = {
+  purchaseItem: {
+    include: {
+      product: true,
+      purchase: { include: { supplier: true, round: true } },
+    },
+  },
+  receipt: true,
+  allocations: true,
+  withdrawals: true,
+} as const;
+export async function inventory(tx: Prisma.TransactionClient) {
+  const lots = await tx.receiptItem.findMany({
+    include: lotInclude,
+    orderBy: [{ receipt: { receivedAt: "asc" } }, { id: "asc" }],
+  });
+  return lots.map((l) => {
+    const assigned = l.allocations.reduce(
+      (s, a) => s.add(a.quantity),
+      decimal(0),
+    );
+    const delivered = l.allocations.reduce(
+      (s, a) => s.add(a.delivered),
+      decimal(0),
+    );
+    const withdrawn = l.withdrawals.reduce(
+      (s, a) => s.add(a.quantity),
+      decimal(0),
+    );
+    return {
+      id: l.id,
+      productId: l.purchaseItem.productId,
+      productName: l.purchaseItem.product.name,
+      supplierId: l.purchaseItem.purchase.supplierId,
+      supplierName: l.purchaseItem.purchase.supplier.name,
+      cycleName: l.purchaseItem.purchase.round.name,
+      roundId: l.purchaseItem.purchase.roundId,
+      receivedAt: l.receipt.receivedAt,
+      invoice: l.receipt.invoice,
+      quantity: l.quantity.toString(),
+      available: l.quantity.sub(assigned).sub(withdrawn).toString(),
+      reserved: assigned.sub(delivered).toString(),
+      delivered: delivered.toString(),
+      onHand: l.quantity.sub(delivered).sub(withdrawn).toString(),
+      unitCost: l.effectiveUnitCost.toString(),
+      withdrawals: l.withdrawals,
+    };
+  });
+}
+// Fill unreserved quantities oldest encargo first. Existing assignments remain
+// attached to their receipt, including delivered quantities, across cycle closes.
+export async function allocateStock(tx: Prisma.TransactionClient) {
+  const lots = await inventory(tx);
+  const items = await tx.orderItem.findMany({
+    include: { allocations: true, order: true },
+    orderBy: [{ order: { createdAt: "asc" } }, { id: "asc" }],
+  });
+  for (const item of items) {
+    let need = item.quantity.sub(
+      item.allocations.reduce((s, a) => s.add(a.quantity), decimal(0)),
+    );
+    for (const lot of lots) {
+      if (need.lte(0)) break;
+      if (item.source !== "STOCK" && lot.roundId !== item.order.roundId)
+        continue;
+      if (
+        lot.productId !== item.productId ||
+        lot.supplierId !== item.supplierId ||
+        decimal(lot.available).lte(0)
+      )
+        continue;
+      const take = Prisma.Decimal.min(need, decimal(lot.available));
+      await tx.stockAllocation.upsert({
+        where: {
+          receiptItemId_orderItemId: {
+            receiptItemId: lot.id,
+            orderItemId: item.id,
+          },
+        },
+        create: { receiptItemId: lot.id, orderItemId: item.id, quantity: take },
+        update: { quantity: { increment: take } },
+      });
+      lot.available = decimal(lot.available).sub(take).toString();
+      need = need.sub(take);
+    }
+    if (item.source === "STOCK" && need.gt(0))
+      throw new ConflictException(
+        "No hay suficientes libras libres de este producto. Actualiza el inventario.",
+      );
+  }
+}
+export async function releaseForEdit(
+  tx: Prisma.TransactionClient,
+  itemId: string,
+  newQuantity: string,
+) {
+  const allocations = await tx.stockAllocation.findMany({
+    where: { orderItemId: itemId },
+  });
+  const delivered = allocations.reduce(
+    (s, a) => s.add(a.delivered),
+    decimal(0),
+  );
+  if (delivered.gt(newQuantity))
+    throw new BadRequestException("No puedes quitar cantidades ya entregadas.");
+  // Preserve consumed lot history; release only the unfulfilled portion.
+  for (const a of allocations) {
+    if (a.delivered.isZero())
+      await tx.stockAllocation.delete({ where: { id: a.id } });
+    else
+      await tx.stockAllocation.update({
+        where: { id: a.id },
+        data: { quantity: a.delivered },
+      });
+  }
+}

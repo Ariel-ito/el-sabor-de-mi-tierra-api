@@ -143,6 +143,8 @@ export class RoundPatchDto {
   closesAt?: string;
 }
 export class ItemDto {
+  @ValidateIf((_o, v) => v !== undefined) @IsIn(["PREORDER", "STOCK"]) source?:
+    "PREORDER" | "STOCK";
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
   @Matches(MONEY)
@@ -232,4 +234,44 @@ export class ReceiptDto {
   @ValidateNested({ each: true })
   @Type(() => ReceiptLineDto)
   items!: ReceiptLineDto[];
+}
+
+export class PaymentDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @Matches(MONEY) amount!: string;
+  @IsIn(["CASH", "TRANSFER"]) method!: string;
+  @IsDateString({ strict: true }) paidAt!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
+export class VoidPaymentDto {
+  @IsString() @Matches(/\S/) @MaxLength(500) reason!: string;
+}
+export class DeliveryLineDto {
+  @IsUUID() orderItemId!: string;
+  @Matches(QUANTITY) quantity!: string;
+}
+export class DeliveryDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @IsDateString({ strict: true }) deliveredAt!: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => DeliveryLineDto)
+  items!: DeliveryLineDto[];
+}
+export class WithdrawalDto {
+  @IsUUID() id!: string;
+  @IsUUID() receiptItemId!: string;
+  @Matches(QUANTITY) quantity!: string;
+  @IsIn(["SAMPLE", "PERSONAL", "LOSS"]) reason!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }

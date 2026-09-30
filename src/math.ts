@@ -9,7 +9,9 @@ export const lineTotal = (
 ) => money(decimal(quantity).mul(price));
 export const orderInclude = {
   customer: true,
-  items: { include: { product: true, supplier: true } },
+  payments: { orderBy: { paidAt: "asc" } },
+  deliveries: { include: { items: true }, orderBy: { deliveredAt: "asc" } },
+  items: { include: { product: true, supplier: true, allocations: true } },
 } as const;
 export const saleTotal = (item: any) =>
   item.totalAmount == null
@@ -18,6 +20,15 @@ export const saleTotal = (item: any) =>
 export function serializeOrder(order: any) {
   const items = order.items.map((item: any) => ({
     ...item,
+    reservedQuantity: (item.allocations || [])
+      .reduce(
+        (s: Prisma.Decimal, a: any) => s.add(a.quantity).sub(a.delivered),
+        decimal(0),
+      )
+      .toString(),
+    deliveredQuantity: (item.allocations || [])
+      .reduce((s: Prisma.Decimal, a: any) => s.add(a.delivered), decimal(0))
+      .toString(),
     quantity: item.quantity.toString(),
     unitPrice: money(item.unitPrice),
     totalAmount: item.totalAmount == null ? null : money(item.totalAmount),
@@ -29,8 +40,32 @@ export function serializeOrder(order: any) {
         ? null
         : lineTotal(item.quantity, item.estimatedUnitCost),
   }));
+  const total = items.reduce(
+    (s: Prisma.Decimal, i: any) => s.add(i.lineTotal),
+    decimal(0),
+  );
+  const paid = (order.payments || [])
+    .filter((p: any) => !p.voidedAt)
+    .reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), decimal(0));
+  const delivered = items.reduce(
+    (s: Prisma.Decimal, i: any) => s.add(i.deliveredQuantity),
+    decimal(0),
+  );
+  const quantity = items.reduce(
+    (s: Prisma.Decimal, i: any) => s.add(i.quantity),
+    decimal(0),
+  );
   return {
     ...order,
+    paid: money(paid),
+    balance: money(Prisma.Decimal.max(0, total.sub(paid))),
+    credit: money(Prisma.Decimal.max(0, paid.sub(total))),
+    paymentStatus: paid.gte(total) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID",
+    deliveryStatus: delivered.gte(quantity)
+      ? "DELIVERED"
+      : delivered.gt(0)
+        ? "PARTIAL"
+        : "ORDERED",
     items,
     profitability: metrics([{ ...order, items }]),
     total: money(
@@ -45,6 +80,7 @@ export function purchaseSummary(roundId: string, orders: any[]) {
   const groups = new Map<string, any>();
   for (const order of orders)
     for (const item of order.items) {
+      if (item.source === "STOCK") continue;
       if (!groups.has(item.supplierId))
         groups.set(item.supplierId, {
           supplierId: item.supplierId,

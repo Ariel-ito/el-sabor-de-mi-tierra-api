@@ -1,0 +1,10 @@
+ALTER TABLE "StockAllocation" ADD CONSTRAINT "StockAllocation_valid_quantities" CHECK ("quantity" > 0 AND "delivered" >= 0 AND "delivered" <= "quantity");
+ALTER TABLE "Payment" ADD CONSTRAINT "Payment_positive_amount" CHECK ("amount" > 0);
+ALTER TABLE "Payment" ADD CONSTRAINT "Payment_valid_method" CHECK ("method" IN ('CASH','TRANSFER'));
+ALTER TABLE "StockWithdrawal" ADD CONSTRAINT "StockWithdrawal_positive_quantity" CHECK ("quantity" > 0);
+ALTER TABLE "StockWithdrawal" ADD CONSTRAINT "StockWithdrawal_valid_reason" CHECK ("reason" IN ('SAMPLE','PERSONAL','LOSS'));
+ALTER TABLE "DeliveryItem" ADD CONSTRAINT "DeliveryItem_positive_quantity" CHECK ("quantity" > 0);
+ALTER TABLE "OrderItem" ADD CONSTRAINT "OrderItem_valid_source" CHECK ("source" IN ('PREORDER','STOCK'));
+CREATE INDEX "StockAllocation_orderItemId_idx" ON "StockAllocation"("orderItemId");
+CREATE INDEX "Payment_orderId_idx" ON "Payment"("orderId");
+CREATE INDEX "Delivery_orderId_idx" ON "Delivery"("orderId");

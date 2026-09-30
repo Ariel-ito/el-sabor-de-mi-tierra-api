@@ -28,42 +28,42 @@ model Session {
 }
 
 model Customer {
-  id        String   @id @default(uuid()) @db.Uuid
-  name      String
-  phoneCountryCode String @default("+504")
-  phone     String?
-  notes     String?
-  createdAt DateTime @default(now())
-  orders    Order[]
+  id               String   @id @default(uuid()) @db.Uuid
+  name             String
+  phoneCountryCode String   @default("+504")
+  phone            String?
+  notes            String?
+  createdAt        DateTime @default(now())
+  orders           Order[]
 }
 
 model Supplier {
-  purchases Purchase[]
-  deliveryContactName String?
-  deliveryContactPhone String?
-  deliveryContactCountryCode String @default("+504")
-  id        String      @id @default(uuid()) @db.Uuid
-  name      String
-  region    String
-  phoneCountryCode String @default("+504")
-  phone     String?
-  createdAt DateTime    @default(now())
-  products  Product[]
-  items     OrderItem[]
+  purchases                  Purchase[]
+  deliveryContactName        String?
+  deliveryContactPhone       String?
+  deliveryContactCountryCode String      @default("+504")
+  id                         String      @id @default(uuid()) @db.Uuid
+  name                       String
+  region                     String
+  phoneCountryCode           String      @default("+504")
+  phone                      String?
+  createdAt                  DateTime    @default(now())
+  products                   Product[]
+  items                      OrderItem[]
 }
 
 model Product {
-  purchaseItems PurchaseItem[]
-  costEffectiveAt DateTime?
-  id                String      @id @default(uuid()) @db.Uuid
+  purchaseItems     PurchaseItem[]
+  costEffectiveAt   DateTime?
+  id                String         @id @default(uuid()) @db.Uuid
   name              String
-  unit              String      @default("lb")
-  salePrice         Decimal     @db.Decimal(12, 2)
-  estimatedCost     Decimal     @db.Decimal(12, 2)
-  defaultSupplierId String      @db.Uuid
-  defaultSupplier   Supplier    @relation(fields: [defaultSupplierId], references: [id])
-  active            Boolean     @default(true)
-  createdAt         DateTime    @default(now())
+  unit              String         @default("lb")
+  salePrice         Decimal        @db.Decimal(12, 2)
+  estimatedCost     Decimal        @db.Decimal(12, 2)
+  defaultSupplierId String         @db.Uuid
+  defaultSupplier   Supplier       @relation(fields: [defaultSupplierId], references: [id])
+  active            Boolean        @default(true)
+  createdAt         DateTime       @default(now())
   items             OrderItem[]
 }
 
@@ -84,6 +84,8 @@ model Round {
 }
 
 model Order {
+  payments   Payment[]
+  deliveries Delivery[]
   id         String      @id @default(uuid()) @db.Uuid
   roundId    String      @db.Uuid
   round      Round       @relation(fields: [roundId], references: [id])
@@ -99,17 +101,20 @@ model Order {
 }
 
 model OrderItem {
-  totalAmount Decimal? @db.Decimal(12,2)
-  id         String   @id @default(uuid()) @db.Uuid
-  orderId    String   @db.Uuid
-  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId  String   @db.Uuid
-  product    Product  @relation(fields: [productId], references: [id])
-  supplierId String   @db.Uuid
-  supplier   Supplier @relation(fields: [supplierId], references: [id])
-  quantity   Decimal  @db.Decimal(12, 3)
-  unitPrice  Decimal  @db.Decimal(12, 2)
-  estimatedUnitCost Decimal? @db.Decimal(12, 2)
+  source            String            @default("PREORDER")
+  allocations       StockAllocation[]
+  deliveryItems     DeliveryItem[]
+  totalAmount       Decimal?          @db.Decimal(12, 2)
+  id                String            @id @default(uuid()) @db.Uuid
+  orderId           String            @db.Uuid
+  order             Order             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId         String            @db.Uuid
+  product           Product           @relation(fields: [productId], references: [id])
+  supplierId        String            @db.Uuid
+  supplier          Supplier          @relation(fields: [supplierId], references: [id])
+  quantity          Decimal           @db.Decimal(12, 3)
+  unitPrice         Decimal           @db.Decimal(12, 2)
+  estimatedUnitCost Decimal?          @db.Decimal(12, 2)
 }
 
 model AuditLog {
@@ -126,51 +131,116 @@ model AuditLog {
 }
 
 model Purchase {
-  id String @id @default(uuid()) @db.Uuid
-  roundId String @db.Uuid
-  round Round @relation(fields: [roundId], references: [id])
-  supplierId String @db.Uuid
-  supplier Supplier @relation(fields: [supplierId], references: [id])
-  orderedAt DateTime
-  createdAt DateTime @default(now())
-  version Int @default(1)
-  items PurchaseItem[]
-  receipts Receipt[]
+  id         String         @id @default(uuid()) @db.Uuid
+  roundId    String         @db.Uuid
+  round      Round          @relation(fields: [roundId], references: [id])
+  supplierId String         @db.Uuid
+  supplier   Supplier       @relation(fields: [supplierId], references: [id])
+  orderedAt  DateTime
+  createdAt  DateTime       @default(now())
+  version    Int            @default(1)
+  items      PurchaseItem[]
+  receipts   Receipt[]
 }
+
 model PurchaseItem {
-  id String @id @default(uuid()) @db.Uuid
-  purchaseId String @db.Uuid
-  purchase Purchase @relation(fields: [purchaseId], references: [id])
-  productId String @db.Uuid
-  product Product @relation(fields: [productId], references: [id])
-  quantity Decimal @db.Decimal(12,3)
-  quotedUnitCost Decimal @db.Decimal(12,2)
-  receiptItems ReceiptItem[]
+  id             String        @id @default(uuid()) @db.Uuid
+  purchaseId     String        @db.Uuid
+  purchase       Purchase      @relation(fields: [purchaseId], references: [id])
+  productId      String        @db.Uuid
+  product        Product       @relation(fields: [productId], references: [id])
+  quantity       Decimal       @db.Decimal(12, 3)
+  quotedUnitCost Decimal       @db.Decimal(12, 2)
+  receiptItems   ReceiptItem[]
+
   @@unique([purchaseId, productId])
 }
+
 model Receipt {
-  id String @id @db.Uuid
-  purchaseId String @db.Uuid
-  purchase Purchase @relation(fields: [purchaseId], references: [id])
-  receivedAt DateTime
-  invoice String
-  notes String?
-  globalDiscount Decimal @db.Decimal(12,2)
-  total Decimal @db.Decimal(14,2)
-  createdAt DateTime @default(now())
-  items ReceiptItem[]
+  id             String        @id @db.Uuid
+  purchaseId     String        @db.Uuid
+  purchase       Purchase      @relation(fields: [purchaseId], references: [id])
+  receivedAt     DateTime
+  invoice        String
+  notes          String?
+  globalDiscount Decimal       @db.Decimal(12, 2)
+  total          Decimal       @db.Decimal(14, 2)
+  createdAt      DateTime      @default(now())
+  items          ReceiptItem[]
 }
+
 model ReceiptItem {
-  id String @id @default(uuid()) @db.Uuid
-  receiptId String @db.Uuid
-  receipt Receipt @relation(fields: [receiptId], references: [id])
-  purchaseItemId String @db.Uuid
-  purchaseItem PurchaseItem @relation(fields: [purchaseItemId], references: [id])
-  quantity Decimal @db.Decimal(12,3)
-  unitCost Decimal @db.Decimal(12,2)
-  unitDiscount Decimal @db.Decimal(12,2)
-  allocatedDiscount Decimal @db.Decimal(12,2)
-  netTotal Decimal @db.Decimal(14,2)
-  effectiveUnitCost Decimal @db.Decimal(16,6)
+  allocations       StockAllocation[]
+  withdrawals       StockWithdrawal[]
+  id                String            @id @default(uuid()) @db.Uuid
+  receiptId         String            @db.Uuid
+  receipt           Receipt           @relation(fields: [receiptId], references: [id])
+  purchaseItemId    String            @db.Uuid
+  purchaseItem      PurchaseItem      @relation(fields: [purchaseItemId], references: [id])
+  quantity          Decimal           @db.Decimal(12, 3)
+  unitCost          Decimal           @db.Decimal(12, 2)
+  unitDiscount      Decimal           @db.Decimal(12, 2)
+  allocatedDiscount Decimal           @db.Decimal(12, 2)
+  netTotal          Decimal           @db.Decimal(14, 2)
+  effectiveUnitCost Decimal           @db.Decimal(16, 6)
+
   @@unique([receiptId, purchaseItemId])
+}
+
+model StockAllocation {
+  id            String      @id @default(uuid()) @db.Uuid
+  receiptItemId String      @db.Uuid
+  receiptItem   ReceiptItem @relation(fields: [receiptItemId], references: [id])
+  orderItemId   String      @db.Uuid
+  orderItem     OrderItem   @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  quantity      Decimal     @db.Decimal(12, 3)
+  delivered     Decimal     @default(0) @db.Decimal(12, 3)
+
+  @@unique([receiptItemId, orderItemId])
+  @@index([orderItemId])
+}
+
+model StockWithdrawal {
+  id            String      @id @db.Uuid
+  receiptItemId String      @db.Uuid
+  receiptItem   ReceiptItem @relation(fields: [receiptItemId], references: [id])
+  quantity      Decimal     @db.Decimal(12, 3)
+  reason        String
+  notes         String?
+  createdAt     DateTime    @default(now())
+}
+
+model Payment {
+  id         String    @id @db.Uuid
+  orderId    String    @db.Uuid
+  order      Order     @relation(fields: [orderId], references: [id])
+  amount     Decimal   @db.Decimal(12, 2)
+  method     String
+  paidAt     DateTime
+  notes      String?
+  voidedAt   DateTime?
+  voidReason String?
+  createdAt  DateTime  @default(now())
+
+  @@index([orderId])
+}
+
+model Delivery {
+  id          String         @id @db.Uuid
+  orderId     String         @db.Uuid
+  order       Order          @relation(fields: [orderId], references: [id])
+  deliveredAt DateTime
+  createdAt   DateTime       @default(now())
+  items       DeliveryItem[]
+
+  @@index([orderId])
+}
+
+model DeliveryItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  deliveryId  String    @db.Uuid
+  delivery    Delivery  @relation(fields: [deliveryId], references: [id])
+  orderItemId String    @db.Uuid
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id])
+  quantity    Decimal   @db.Decimal(12, 3)
 }

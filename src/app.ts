@@ -1,3 +1,10 @@
+import {
+  stockLock,
+  inventory,
+  allocateStock,
+  releaseForEdit,
+} from "./inventory";
+import { PaymentDto, VoidPaymentDto, DeliveryDto, WithdrawalDto } from "./dto";
 import { purchaseInclude, receive } from "./purchases";
 import { PurchaseDto, ReceiptDto } from "./dto";
 import { ApiBearerAuth } from "@nestjs/swagger";
@@ -40,6 +47,7 @@ import {
   SupplierDto,
 } from "./dto";
 import {
+  decimal,
   orderInclude,
   purchaseSummary,
   serializeOrder,
@@ -346,16 +354,25 @@ class BusinessController {
   @Get("orders") async orders(
     @Query("roundId", new ParseUUIDPipe({ optional: true })) roundId?: string,
   ) {
-    return (
-      await this.db.order.findMany({
-        where: roundId ? { roundId } : {},
-        include: orderInclude,
-        orderBy: { createdAt: "desc" },
-      })
-    ).map(serializeOrder);
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        await allocateStock(tx);
+        return (
+          await tx.order.findMany({
+            where: roundId ? { roundId } : {},
+            include: orderInclude,
+            orderBy: { createdAt: "desc" },
+          })
+        ).map(serializeOrder);
+      },
+      { timeout: 15000 },
+    );
   }
+
   @Post("orders") createOrder(@Body() body: OrderDto, @Req() req: AuthRequest) {
     return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
       const round = await this.lockRound(tx, body.roundId);
       if (round.status !== "OPEN")
         throw new ConflictException("El ciclo está cerrado");
@@ -382,7 +399,13 @@ class BusinessController {
         null,
         after,
       );
-      return serializeOrder(after);
+      await allocateStock(tx);
+      return serializeOrder(
+        await tx.order.findUniqueOrThrow({
+          where: { id: after.id },
+          include: orderInclude,
+        }),
+      );
     });
   }
   private async costItems(
@@ -394,6 +417,7 @@ class BusinessController {
       quantity: string;
       unitPrice: string;
       totalAmount?: string;
+      source?: "PREORDER" | "STOCK";
     }[],
     previous: any[] = [],
   ) {
@@ -422,6 +446,8 @@ class BusinessController {
         old.supplierId === item.supplierId;
       return {
         ...item,
+        id: old?.id,
+        source: item.source ?? old?.source ?? "PREORDER",
         totalAmount: item.totalAmount ?? null,
         unitPrice:
           item.totalAmount !== undefined
@@ -441,6 +467,7 @@ class BusinessController {
     @Req() req: AuthRequest,
   ) {
     return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
       const current = await tx.order.findUnique({ where: { id } });
       if (!current) throw new NotFoundException("Pedido no encontrado");
       const round = await this.lockRound(tx, current.roundId);
@@ -469,12 +496,28 @@ class BusinessController {
         throw new ConflictException(
           "El pedido cambió; recarga antes de editar",
         );
-      if (body.items) {
-        await tx.orderItem.deleteMany({ where: { orderId: id } });
-        await tx.orderItem.createMany({
-          data: items!.map((item) => ({ ...item, orderId: id })),
-        });
+      if (items) {
+        for (const old of before.items) {
+          const next = items.find((i) => i.id === old.id);
+          const same =
+            next &&
+            next.productId === old.productId &&
+            next.supplierId === old.supplierId;
+          if (!same && old.allocations.some((a) => a.delivered.gt(0)))
+            throw new BadRequestException(
+              "No puedes quitar o sustituir un producto entregado.",
+            );
+          if (!next || !same || !old.quantity.eq(next.quantity))
+            await releaseForEdit(tx, old.id, same ? next!.quantity : "0");
+          if (!next) await tx.orderItem.delete({ where: { id: old.id } });
+        }
+        for (const item of items) {
+          if (item.id)
+            await tx.orderItem.update({ where: { id: item.id }, data: item });
+          else await tx.orderItem.create({ data: { ...item, orderId: id } });
+        }
       }
+      await allocateStock(tx);
       const after = await tx.order.findUniqueOrThrow({
         where: { id },
         include: orderInclude,
@@ -482,6 +525,238 @@ class BusinessController {
       await this.audit(tx, req.actor.id, "Order", id, "UPDATE", before, after);
       return serializeOrder(after);
     });
+  }
+  @Get("inventory") async stock() {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        await allocateStock(tx);
+        return inventory(tx);
+      },
+      { timeout: 15000 },
+    );
+  }
+  @Post("inventory/withdrawals") async withdraw(
+    @Body() body: WithdrawalDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
+      const prior = await tx.stockWithdrawal.findUnique({
+        where: { id: body.id },
+      });
+      if (prior) {
+        if (prior.receiptItemId !== body.receiptItemId)
+          throw new ConflictException("Identificador ya utilizado");
+        return prior;
+      }
+      await allocateStock(tx);
+      const lot = (await inventory(tx)).find(
+        (l) => l.id === body.receiptItemId,
+      );
+      if (!lot || decimal(lot.available).lt(body.quantity))
+        throw new BadRequestException(
+          "La salida supera las libras libres del lote.",
+        );
+      const result = await tx.stockWithdrawal.create({ data: body });
+      await this.audit(
+        tx,
+        req.actor.id,
+        "StockWithdrawal",
+        body.id,
+        "CREATE",
+        null,
+        result,
+      );
+      return result;
+    });
+  }
+  @Post("orders/:id/payments") async pay(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: PaymentDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
+      const order = await tx.order.findUniqueOrThrow({
+        where: { id },
+        include: orderInclude,
+      });
+      const prior = await tx.payment.findUnique({ where: { id: body.id } });
+      if (prior) {
+        if (prior.orderId !== id)
+          throw new ConflictException("Identificador ya utilizado");
+        return serializeOrder(order);
+      }
+      if (order.version !== body.version)
+        throw new ConflictException(
+          "El encargo cambió. Actualiza antes de registrar el pago.",
+        );
+      const view = serializeOrder(order);
+      if (decimal(body.amount).lte(0) || decimal(body.amount).gt(view.balance))
+        throw new BadRequestException(
+          "El abono debe ser mayor a cero y no superar el saldo pendiente.",
+        );
+      if (new Date(body.paidAt) > new Date())
+        throw new BadRequestException("La fecha de pago no puede ser futura.");
+      const { version, ...data } = body;
+      const payment = await tx.payment.create({
+        data: { ...data, orderId: id },
+      });
+      await tx.order.update({
+        where: { id },
+        data: { version: { increment: 1 } },
+      });
+      await this.audit(
+        tx,
+        req.actor.id,
+        "Payment",
+        payment.id,
+        "CREATE",
+        null,
+        payment,
+      );
+      return serializeOrder(
+        await tx.order.findUniqueOrThrow({
+          where: { id },
+          include: orderInclude,
+        }),
+      );
+    });
+  }
+  @Post("orders/:id/payments/:paymentId/void") async voidPayment(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("paymentId", ParseUUIDPipe) paymentId: string,
+    @Body() body: VoidPaymentDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
+      const before = await tx.payment.findUniqueOrThrow({
+        where: { id: paymentId },
+      });
+      if (before.orderId !== id)
+        throw new BadRequestException("El pago no pertenece a este encargo.");
+      if (!before.voidedAt) {
+        const after = await tx.payment.update({
+          where: { id: paymentId },
+          data: { voidedAt: new Date(), voidReason: body.reason },
+        });
+        await tx.order.update({
+          where: { id },
+          data: { version: { increment: 1 } },
+        });
+        await this.audit(
+          tx,
+          req.actor.id,
+          "Payment",
+          paymentId,
+          "VOID",
+          before,
+          after,
+        );
+      }
+      return serializeOrder(
+        await tx.order.findUniqueOrThrow({
+          where: { id },
+          include: orderInclude,
+        }),
+      );
+    });
+  }
+  @Post("orders/:id/deliveries") async deliver(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: DeliveryDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const prior = await tx.delivery.findUnique({ where: { id: body.id } });
+        if (prior) {
+          if (prior.orderId !== id)
+            throw new ConflictException("Identificador ya utilizado");
+          return serializeOrder(
+            await tx.order.findUniqueOrThrow({
+              where: { id },
+              include: orderInclude,
+            }),
+          );
+        }
+        await allocateStock(tx);
+        const order = await tx.order.findUniqueOrThrow({
+          where: { id },
+          include: orderInclude,
+        });
+        if (order.version !== body.version)
+          throw new ConflictException(
+            "El encargo cambió. Actualiza antes de entregar.",
+          );
+        if (new Date(body.deliveredAt) > new Date())
+          throw new BadRequestException("La entrega no puede ser futura.");
+        if (
+          new Set(body.items.map((i) => i.orderItemId)).size !==
+          body.items.length
+        )
+          throw new BadRequestException("Producto repetido.");
+        for (const input of body.items) {
+          const item = order.items.find((i) => i.id === input.orderItemId);
+          if (!item)
+            throw new BadRequestException("Producto ajeno al encargo.");
+          let need = decimal(input.quantity);
+          const allocations = await tx.stockAllocation.findMany({
+            where: { orderItemId: item.id },
+            include: { receiptItem: { include: { receipt: true } } },
+            orderBy: { receiptItem: { receipt: { receivedAt: "asc" } } },
+          });
+          for (const a of allocations) {
+            if (a.receiptItem.receipt.receivedAt > new Date(body.deliveredAt))
+              continue;
+            const take = Prisma.Decimal.min(need, a.quantity.sub(a.delivered));
+            if (take.gt(0))
+              await tx.stockAllocation.update({
+                where: { id: a.id },
+                data: { delivered: { increment: take } },
+              });
+            need = need.sub(take);
+            if (need.isZero()) break;
+          }
+          if (need.gt(0))
+            throw new BadRequestException(
+              "No hay suficiente producto recibido y reservado para esta entrega. Registra la recepción primero.",
+            );
+        }
+        const delivery = await tx.delivery.create({
+          data: {
+            id: body.id,
+            orderId: id,
+            deliveredAt: body.deliveredAt,
+            items: { create: body.items },
+          },
+          include: { items: true },
+        });
+        await tx.order.update({
+          where: { id },
+          data: { version: { increment: 1 } },
+        });
+        await this.audit(
+          tx,
+          req.actor.id,
+          "Delivery",
+          delivery.id,
+          "CREATE",
+          null,
+          delivery,
+        );
+        return serializeOrder(
+          await tx.order.findUniqueOrThrow({
+            where: { id },
+            include: orderInclude,
+          }),
+        );
+      },
+      { timeout: 15000 },
+    );
   }
   @Get("purchases") purchases(
     @Query("roundId", new ParseUUIDPipe({ optional: true })) roundId?: string,
@@ -547,7 +822,15 @@ class BusinessController {
     @Body() body: ReceiptDto,
     @Req() req: AuthRequest,
   ) {
-    return this.db.$transaction((tx) => receive(tx, id, body, req.actor.id));
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const result = await receive(tx, id, body, req.actor.id);
+        await allocateStock(tx);
+        return result;
+      },
+      { timeout: 15000 },
+    );
   }
   @Get("products/:id/cost-history") history(
     @Param("id", ParseUUIDPipe) id: string,
@@ -574,13 +857,70 @@ class BusinessController {
   @Get("rounds/:id/purchase-summary") async summary(
     @Param("id", ParseUUIDPipe) id: string,
   ) {
-    await this.db.round.findUniqueOrThrow({ where: { id } });
-    return purchaseSummary(
-      id,
-      await this.db.order.findMany({
-        where: { roundId: id },
-        include: orderInclude,
-      }),
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        await allocateStock(tx);
+        await tx.round.findUniqueOrThrow({ where: { id } });
+        const orders = await tx.order.findMany({
+          where: { roundId: id },
+          include: orderInclude,
+        });
+        const result = purchaseSummary(id, orders);
+        const purchases = await tx.purchase.findMany({
+          where: { roundId: id },
+          include: purchaseInclude,
+        });
+        for (const group of result.groups)
+          for (const row of group.items) {
+            const missing = orders
+              .flatMap((o) => o.items)
+              .filter(
+                (i) =>
+                  i.source !== "STOCK" &&
+                  i.productId === row.productId &&
+                  i.supplierId === group.supplierId,
+              )
+              .reduce(
+                (s, i) =>
+                  s
+                    .add(i.quantity)
+                    .sub(
+                      i.allocations.reduce(
+                        (a, b) => a.add(b.quantity),
+                        decimal(0),
+                      ),
+                    ),
+                decimal(0),
+              );
+            const incoming = purchases
+              .filter((p) => p.supplierId === group.supplierId)
+              .reduce(
+                (sum, p) =>
+                  sum.add(
+                    p.items
+                      .filter((i) => i.productId === row.productId)
+                      .reduce(
+                        (s, i) =>
+                          s.add(i.quantity).sub(
+                            p.receipts
+                              .flatMap((r) => r.items)
+                              .filter((r) => r.purchaseItemId === i.id)
+                              .reduce((a, r) => a.add(r.quantity), decimal(0)),
+                          ),
+                        decimal(0),
+                      ),
+                  ),
+                decimal(0),
+              );
+            (row as any).pendingToBuy = Prisma.Decimal.max(
+              0,
+              missing.sub(incoming),
+            ).toString();
+          }
+        return result;
+      },
+      { timeout: 15000 },
     );
   }
 }
