@@ -145,6 +145,10 @@ export class RoundPatchDto {
 export class ItemDto {
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
+  @Matches(MONEY)
+  totalAmount?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsUUID()
   id?: string;
   @ApiProperty() @IsUUID() productId!: string;

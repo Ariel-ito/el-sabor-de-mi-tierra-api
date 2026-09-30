@@ -99,6 +99,14 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
 check(sorted(results)==[201,409],'concurrent receipts cannot duplicate quantities')
 check(prod()['estimatedCost']=='80.00','latest received price becomes current cost')
 
+special=good('POST','/orders',{'roundId':r['id'],'customerId':c['id'],'items':[{'productId':p['id'],'supplierId':s1['id'],'quantity':'0.5','unitPrice':'45','totalAmount':'25'}]},token)
+check(special['total']=='25.00' and special['items'][0]['unitPrice']=='50.00','half pound total derives price')
+line=special['items'][0]
+special=good('PATCH','/orders/'+special['id'],{'version':special['version'],'items':[{'id':line['id'],'productId':p['id'],'supplierId':s1['id'],'quantity':'3','unitPrice':'33.33','totalAmount':'100'}]},token)
+check(special['total']=='100.00' and special['profitability']['sales']=='100.00','nondivisible agreed total is exact in order and statistics')
+check(next(x for x in good('GET','/orders?roundId='+r['id'],token=token) if x['id']==special['id'])['items'][0]['totalAmount']=='100.00','agreed total survives reload')
+special=good('PATCH','/orders/'+special['id'],{'version':special['version'],'items':[{'id':special['items'][0]['id'],'productId':p['id'],'supplierId':s1['id'],'quantity':'3','unitPrice':'40'}]},token)
+check(special['total']=='120.00' and special['items'][0]['totalAmount'] is None,'unit pricing can replace fixed total')
 good('POST','/auth/logout',{},token)
 check(req('GET','/auth/me',token=token)[0]==401,'logout invalidates token')
 print(json.dumps({'passed':len(passed),'checks':passed},ensure_ascii=False,indent=2))

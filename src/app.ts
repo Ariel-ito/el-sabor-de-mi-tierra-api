@@ -393,6 +393,7 @@ class BusinessController {
       supplierId: string;
       quantity: string;
       unitPrice: string;
+      totalAmount?: string;
     }[],
     previous: any[] = [],
   ) {
@@ -421,6 +422,13 @@ class BusinessController {
         old.supplierId === item.supplierId;
       return {
         ...item,
+        totalAmount: item.totalAmount ?? null,
+        unitPrice:
+          item.totalAmount !== undefined
+            ? new Prisma.Decimal(item.totalAmount)
+                .div(item.quantity)
+                .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP)
+            : item.unitPrice,
         estimatedUnitCost: preserve
           ? old.estimatedUnitCost
           : products.find((p) => p.id === item.productId)!.estimatedCost,

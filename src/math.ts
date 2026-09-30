@@ -11,12 +11,17 @@ export const orderInclude = {
   customer: true,
   items: { include: { product: true, supplier: true } },
 } as const;
+export const saleTotal = (item: any) =>
+  item.totalAmount == null
+    ? lineTotal(item.quantity, item.unitPrice)
+    : money(item.totalAmount);
 export function serializeOrder(order: any) {
   const items = order.items.map((item: any) => ({
     ...item,
     quantity: item.quantity.toString(),
     unitPrice: money(item.unitPrice),
-    lineTotal: lineTotal(item.quantity, item.unitPrice),
+    totalAmount: item.totalAmount == null ? null : money(item.totalAmount),
+    lineTotal: saleTotal(item),
     estimatedUnitCost:
       item.estimatedUnitCost == null ? null : money(item.estimatedUnitCost),
     estimatedLineCost:
@@ -87,7 +92,7 @@ export function metrics(orders: any[]) {
     missing = 0;
   for (const order of orders)
     for (const item of order.items) {
-      sales = sales.add(lineTotal(item.quantity, item.unitPrice));
+      sales = sales.add(saleTotal(item));
       quantity = quantity.add(item.quantity);
       if (item.estimatedUnitCost == null) missing++;
       else cost = cost.add(lineTotal(item.quantity, item.estimatedUnitCost));
@@ -121,7 +126,7 @@ export function statistics(rounds: any[], orders: any[]) {
             orders: new Set<string>(),
           });
         const row = rows.get(id);
-        row.sales = row.sales.add(lineTotal(item.quantity, item.unitPrice));
+        row.sales = row.sales.add(saleTotal(item));
         row.quantity = row.quantity.add(item.quantity);
         row.orders.add(order.id);
       }
