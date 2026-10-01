@@ -84,6 +84,9 @@ model Round {
 }
 
 model Order {
+  // ENCARGO belongs to an open cycle; DIRECT is a walk-in sale from stock,
+  // counted in the cycle of the first lot it consumed.
+  kind       String      @default("ENCARGO")
   payments   Payment[]
   deliveries Delivery[]
   id         String      @id @default(uuid()) @db.Uuid
@@ -98,6 +101,7 @@ model Order {
   items      OrderItem[]
 
   @@index([roundId])
+  @@index([kind, createdAt])
 }
 
 model OrderItem {

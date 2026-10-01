@@ -24,7 +24,12 @@ import {
   PaymentDto,
   VoidPaymentDto,
 } from "./dto";
-import { allocateStock, releaseForEdit, stockLock } from "./inventory";
+import {
+  allocateStock,
+  consumeReserved,
+  releaseForEdit,
+  stockLock,
+} from "./inventory";
 import { decimal, orderInclude, serializeOrder } from "./math";
 @ApiBearerAuth()
 @Controller()
@@ -40,7 +45,7 @@ export class OrdersController {
         await allocateStock(tx);
         return (
           await tx.order.findMany({
-            where: roundId ? { roundId } : {},
+            where: { kind: "ENCARGO", ...(roundId ? { roundId } : {}) },
             include: orderInclude,
             orderBy: { createdAt: "desc" },
           })
@@ -142,6 +147,10 @@ export class OrdersController {
       await stockLock(tx);
       const current = await tx.order.findUnique({ where: { id } });
       if (!current) throw new NotFoundException("Pedido no encontrado");
+      if (current.kind === "DIRECT")
+        throw new BadRequestException(
+          "Las ventas sin encargo no se editan; registra una venta nueva.",
+        );
       const round = await lockRound(tx, current.roundId);
       if (round.status !== "OPEN")
         throw new ConflictException("El ciclo está cerrado");
@@ -330,28 +339,12 @@ export class OrdersController {
           const item = order.items.find((i) => i.id === input.orderItemId);
           if (!item)
             throw new BadRequestException("Producto ajeno al encargo.");
-          let need = decimal(input.quantity);
-          const allocations = await tx.stockAllocation.findMany({
-            where: { orderItemId: item.id },
-            include: { receiptItem: { include: { receipt: true } } },
-            orderBy: { receiptItem: { receipt: { receivedAt: "asc" } } },
-          });
-          for (const a of allocations) {
-            if (a.receiptItem.receipt.receivedAt > new Date(body.deliveredAt))
-              continue;
-            const take = Prisma.Decimal.min(need, a.quantity.sub(a.delivered));
-            if (take.gt(0))
-              await tx.stockAllocation.update({
-                where: { id: a.id },
-                data: { delivered: { increment: take } },
-              });
-            need = need.sub(take);
-            if (need.isZero()) break;
-          }
-          if (need.gt(0))
-            throw new BadRequestException(
-              "No hay suficiente producto recibido y reservado para esta entrega. Registra la recepción primero.",
-            );
+          await consumeReserved(
+            tx,
+            item.id,
+            input.quantity,
+            new Date(body.deliveredAt),
+          );
         }
         const delivery = await tx.delivery.create({
           data: {

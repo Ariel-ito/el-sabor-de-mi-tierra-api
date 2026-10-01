@@ -19,7 +19,9 @@ Acceso privado sin registro público; clientes; proveedores y región; productos
 
 Una ronda agrupa pedidos. Tiene múltiples compras a proveedores. Cada compra separa cantidades comprometidas y extras para venta posterior. Una compra puede recibirse parcialmente y generar varios lotes físicos. Cada lote conserva proveedor, producto, cantidad y costo real originales, aunque sus unidades se vendan en rondas posteriores.
 
-Al cerrar una ronda se revisan cantidades y pendientes, sin exigir inventario cero. El sobrante no se vuelve pérdida ni se vuelve a comprar al pasar de ronda. La vista de resultado por ronda y la trazabilidad de la compra/lote son informes distintos, sin duplicar ingresos ni costos.
+Al cerrar una ronda todos sus encargos deben estar entregados (el cierre se bloquea si no) y cada libra libre comprada en ella necesita destino: merma, muestra, consumo propio o queda en existencia. Así la ronda termina con su inventario en 0; lo que queda en existencia sigue disponible para ventas sin encargo y no se vuelve a comprar. Merma, muestras y consumo propio son gasto absorbido de la ronda, valorado al costo real del lote. Los cobros pendientes no bloquean el cierre. (Regla acordada el 2026-10-01; reemplaza la anterior de cerrar sin exigir inventario cero.)
+
+Las ventas sin encargo se hacen con producto libre en existencia, con o sin ronda abierta, se entregan al registrarse y cuentan en la ronda del primer lote que consumen. Si no hay existencia, el pedido se registra como encargo de la siguiente ronda.
 
 ### Precios y resultados
 

@@ -122,3 +122,33 @@ export async function releaseForEdit(
       });
   }
 }
+// Marks reserved pounds as delivered, oldest receipt first, using only lots
+// received by the delivery time.
+export async function consumeReserved(
+  tx: Prisma.TransactionClient,
+  orderItemId: string,
+  quantity: Prisma.Decimal.Value,
+  deliveredAt: Date,
+) {
+  let need = decimal(quantity);
+  const allocations = await tx.stockAllocation.findMany({
+    where: { orderItemId },
+    include: { receiptItem: { include: { receipt: true } } },
+    orderBy: { receiptItem: { receipt: { receivedAt: "asc" } } },
+  });
+  for (const a of allocations) {
+    if (a.receiptItem.receipt.receivedAt > deliveredAt) continue;
+    const take = Prisma.Decimal.min(need, a.quantity.sub(a.delivered));
+    if (take.gt(0))
+      await tx.stockAllocation.update({
+        where: { id: a.id },
+        data: { delivered: { increment: take } },
+      });
+    need = need.sub(take);
+    if (need.isZero()) break;
+  }
+  if (need.gt(0))
+    throw new BadRequestException(
+      "No hay suficiente producto recibido y reservado para esta entrega. Registra la recepción primero.",
+    );
+}

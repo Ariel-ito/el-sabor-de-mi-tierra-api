@@ -7,6 +7,7 @@ import { InventoryController } from "./inventory.controller";
 import { OrdersController } from "./orders.controller";
 import { PurchasesController } from "./purchases.controller";
 import { RoundsController } from "./rounds.controller";
+import { SalesController } from "./sales.controller";
 @Module({
   controllers: [
     HealthController,
@@ -16,6 +17,7 @@ import { RoundsController } from "./rounds.controller";
     OrdersController,
     InventoryController,
     PurchasesController,
+    SalesController,
   ],
   providers: [Db, AuthGuard],
 })

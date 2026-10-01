@@ -212,6 +212,47 @@ export class PurchaseDto {
   @Type(() => PurchaseLineDto)
   items!: PurchaseLineDto[];
 }
+export class CloseDecisionDto {
+  @IsUUID() receiptItemId!: string;
+  @IsIn(["LOSS", "SAMPLE", "PERSONAL", "KEEP"])
+  reason!: "LOSS" | "SAMPLE" | "PERSONAL" | "KEEP";
+  @Matches(QUANTITY) quantity!: string;
+}
+export class CloseRoundDto {
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => CloseDecisionDto)
+  decisions!: CloseDecisionDto[];
+}
+export class SaleLineDto {
+  @IsUUID() productId!: string;
+  @Matches(QUANTITY) quantity!: string;
+  @Matches(MONEY) unitPrice!: string;
+}
+export class SalePaymentDto {
+  @Matches(MONEY) amount!: string;
+  @IsIn(["CASH", "TRANSFER"]) method!: string;
+}
+export class SaleDto {
+  @IsUUID() id!: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() customerId?: string;
+  @IsDateString({ strict: true }) soldAt!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => SaleLineDto)
+  items!: SaleLineDto[];
+  @ValidateIf((_o, v) => v !== undefined)
+  @ValidateNested()
+  @Type(() => SalePaymentDto)
+  payment?: SalePaymentDto;
+}
 export class PurchasePatchDto {
   @IsInt() @Min(1) version!: number;
   @IsArray()

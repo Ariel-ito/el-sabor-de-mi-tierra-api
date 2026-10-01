@@ -47,10 +47,17 @@ check(o['paid']=='50.00' and o['balance']=='87.50' and o['paymentStatus']=='PART
 check(good('POST',f"/orders/{o['id']}/payments",pay)['paid']=='50.00','payment retry is idempotent')
 check(call('POST',f"/orders/{o['id']}/payments",{**pay,'id':uid(),'version':o['version'],'amount':'88'})[0]==400,'reject excess payment')
 check(call('POST',f"/orders/{o['id']}/payments",{**pay,'id':uid(),'version':o['version'],'amount':'0'})[0]==400,'reject zero payment')
-# Closed cycles allow fulfilment and collection.
-good('PATCH',f"/rounds/{r['id']}",{'status':'CLOSED'})
+# Closing requires every encargo delivered and every free pound decided.
+check(call('PATCH',f"/rounds/{r['id']}",{'status':'CLOSED'})[0]==409,'pending deliveries block a direct close')
+state=good('GET',f"/rounds/{r['id']}/closing")
+check(len(state['pendingDeliveries'])==1 and state['leftovers'][0]['available']=='2','closing lists pending deliveries and leftovers')
+check(call('POST',f"/rounds/{r['id']}/close",{'decisions':[]})[0]==409,'guided close is blocked by pending deliveries')
 d2={'id':uid(),'version':o['version'],'deliveredAt':'2026-09-29T12:00:00Z','items':[{'orderItemId':i['id'],'quantity':str(float(i['quantity'])-float(i['deliveredQuantity']))} for i in o['items']]}
 o=good('POST',f"/orders/{o['id']}/deliveries",d2)
+leftover=good('GET',f"/rounds/{r['id']}/closing")['leftovers'][0]['receiptItemId']
+check(call('POST',f"/rounds/{r['id']}/close",{'decisions':[{'receiptItemId':leftover,'reason':'KEEP','quantity':'1.5'}]})[0]==400,'every leftover pound needs a destination')
+good('POST',f"/rounds/{r['id']}/close",{'decisions':[{'receiptItemId':leftover,'reason':'KEEP','quantity':'2'}]})
+check(next(x for x in good('GET','/rounds') if x['id']==r['id'])['status']=='CLOSED','kept stock closes the cycle')
 check(o['deliveryStatus']=='DELIVERED' and o['paymentStatus']=='PARTIAL','delivered but unpaid remainder in closed cycle')
 o=good('POST',f"/orders/{o['id']}/payments",{**pay,'id':uid(),'version':o['version'],'amount':'87.50','method':'TRANSFER'})
 check(o['paymentStatus']=='PAID' and o['balance']=='0.00','full payment automatically marks paid')
@@ -90,6 +97,31 @@ edited=good('POST',f"/purchases/{purchase['id']}/receipts",{'id':uid(),'version'
 check(sum(float(x['quantity']) for rc in edited['receipts'] for x in rc['items'] if x['purchaseItemId']==line5['id'])==6.5,'added pounds can be received after editing')
 edited=good('PATCH',f"/purchases/{purchase['id']}",{'version':edited['version'],'items':[item('6.5')]})
 check(len(edited['items'])==1,'unreceived added product can be removed')
-good('PATCH',f"/rounds/{r['id']}",{'status':'CLOSED'})
+state=good('GET',f"/rounds/{r['id']}/closing")
+good('POST',f"/rounds/{r['id']}/close",{'decisions':[{'receiptItemId':l['receiptItemId'],'reason':'KEEP','quantity':l['available']} for l in state['leftovers']]})
+# Walk-in sales use free stock of any cycle, even closed, and count in the lot's cycle.
+free=lambda:sum(float(l['available']) for l in good('GET','/inventory') if l['productId']==p['id'])
+before=free()
+sale={'id':uid(),'soldAt':'2026-09-30T10:00:00Z','items':[{'productId':p['id'],'quantity':'1','unitPrice':'48'}],'payment':{'amount':'48.00','method':'CASH'}}
+sold=good('POST','/sales',sale)
+check(sold['kind']=='DIRECT' and sold['deliveryStatus']=='DELIVERED' and sold['paymentStatus']=='PAID','walk-in sale is delivered and paid on the spot')
+check(sold['roundId']==r['id'] and free()==before-1,'sale consumes free stock and counts in the lot cycle')
+check(good('POST','/sales',sale)['id']==sold['id'] and free()==before-1,'sale retry is idempotent')
+check(all(x['id']!=sold['id'] for x in good('GET',f"/orders?roundId={r['id']}")),'walk-in sales stay out of the encargo list')
+check(any(x['id']==sold['id'] for x in good('GET','/sales')),'walk-in sales are listed apart')
+check(call('POST','/sales',{**sale,'id':uid(),'items':[{**sale['items'][0],'quantity':'500'}]})[0]==400,'cannot sell more than free stock')
+check(call('PATCH',f"/orders/{sold['id']}",{'version':sold['version'],'notes':'x'})[0]==400,'walk-in sales are not edited as encargos')
+unpaid={'id':uid(),'soldAt':sale['soldAt'],'items':[{**sale['items'][0],'quantity':'0.5'}]}
+credit=good('POST','/sales',unpaid)
+check(credit['paymentStatus']=='UNPAID' and credit['balance']=='24.00','unpaid walk-in sale becomes a debt')
+# Losses and samples at close are absorbed cost of the cycle that bought them.
+r3=good('POST','/rounds',{'name':'Cierre con merma '+u,'opensAt':'2026-09-29T00:00:00Z','closesAt':'2026-10-03T00:00:00Z'})
+buy=good('POST','/purchases',{'id':uid(),'roundId':r3['id'],'supplierId':s['id'],'orderedAt':'2026-09-29T14:00:00Z','items':[{'productId':p['id'],'quantity':'3','quotedUnitCost':'40'}]})
+good('POST',f"/purchases/{buy['id']}/receipts",{'id':uid(),'version':buy['version'],'receivedAt':'2026-09-29T15:00:00Z','invoice':'INV3 '+u,'globalDiscount':'0','items':[{'purchaseItemId':buy['items'][0]['id'],'quantity':'3','unitCost':'40','unitDiscount':'0'}]})
+lot3=good('GET',f"/rounds/{r3['id']}/closing")['leftovers'][0]['receiptItemId']
+good('POST',f"/rounds/{r3['id']}/close",{'decisions':[{'receiptItemId':lot3,'reason':'LOSS','quantity':'2'},{'receiptItemId':lot3,'reason':'SAMPLE','quantity':'1'}]})
+cyc=next(c for c in good('GET','/statistics')['cycles'] if c['id']==r3['id'])
+check(cyc['absorbed']['loss']['cost']=='80.00' and cyc['absorbed']['sample']['pounds']=='1' and cyc['absorbed']['total']=='120.00','close records loss and samples as absorbed cost')
+check(call('POST',f"/rounds/{r3['id']}/close",{'decisions':[]})[0]==409,'a closed cycle cannot be closed again')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

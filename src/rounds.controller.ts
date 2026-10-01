@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   Controller,
   Get,
   Inject,
@@ -15,7 +16,8 @@ import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import { cycleCosts, Lot } from "./costing";
-import { RoundDto, RoundPatchDto } from "./dto";
+import { applyClosing, closingState } from "./closing";
+import { CloseRoundDto, RoundDto, RoundPatchDto } from "./dto";
 import { allocateStock, stockLock } from "./inventory";
 import { decimal, orderInclude, purchaseSummary, statistics } from "./math";
 import { purchaseInclude } from "./purchases";
@@ -40,6 +42,7 @@ export class RoundsController {
     @Req() req: AuthRequest,
   ) {
     return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
       const before = await lockRound(tx, id);
       if (
         new Date(body.closesAt ?? before.closesAt) <=
@@ -48,10 +51,53 @@ export class RoundsController {
         throw new BadRequestException(
           "El cierre debe ser posterior a la apertura",
         );
+      if (body.status === "CLOSED" && before.status === "OPEN") {
+        const state = await closingState(tx, id);
+        if (state.pendingDeliveries.length || state.leftovers.length)
+          throw new ConflictException(
+            "El ciclo tiene entregas pendientes o sobrante sin decidir. Usa Cerrar ciclo.",
+          );
+      }
       const after = await tx.round.update({ where: { id }, data: body });
       await audit(tx, req.actor.id, "Round", id, "UPDATE", before, after);
       return after;
     });
+  }
+  @Get("rounds/:id/closing") closing(@Param("id", ParseUUIDPipe) id: string) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        await lockRound(tx, id);
+        return closingState(tx, id);
+      },
+      { timeout: 15000 },
+    );
+  }
+  @Post("rounds/:id/close") close(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: CloseRoundDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const before = await lockRound(tx, id);
+        if (before.status !== "OPEN")
+          throw new ConflictException("El ciclo ya está cerrado.");
+        const result = await applyClosing(tx, id, before.name, body.decisions);
+        const after = await tx.round.update({
+          where: { id },
+          data: { status: "CLOSED" },
+        });
+        await audit(tx, req.actor.id, "Round", id, "CLOSE", before, {
+          ...after,
+          decisions: body.decisions,
+          leftovers: result.leftovers,
+        });
+        return after;
+      },
+      { timeout: 15000 },
+    );
   }
   @Get("statistics") async stats() {
     const [rounds, orders, receipts] = await this.db.$transaction([
@@ -69,7 +115,11 @@ export class RoundsController {
         },
       }),
       this.db.receiptItem.findMany({
-        include: { purchaseItem: { include: { purchase: true } } },
+        include: {
+          purchaseItem: { include: { purchase: true } },
+          allocations: true,
+          withdrawals: true,
+        },
       }),
     ]);
     const lots: Lot[] = receipts.map((r) => ({
@@ -78,6 +128,10 @@ export class RoundsController {
       roundId: r.purchaseItem.purchase.roundId,
       quantity: r.quantity,
       unitCost: r.effectiveUnitCost,
+      withdrawals: r.withdrawals,
+      free: r.quantity
+        .sub(r.allocations.reduce((a, x) => a.add(x.quantity), decimal(0)))
+        .sub(r.withdrawals.reduce((a, x) => a.add(x.quantity), decimal(0))),
     }));
     const result = statistics(rounds, orders);
     return {

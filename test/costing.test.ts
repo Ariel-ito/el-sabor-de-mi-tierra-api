@@ -79,3 +79,48 @@ test("cycle view reports price, cost and margin per pound by product", () => {
   assert.equal(q.marginPerLb, "30.00");
   assert.equal(q.costSources.cycle, "3");
 });
+test("absorbed cost values losses and samples at lot cost and keeps free stock apart", () => {
+  const view = cycleCosts(
+    "r",
+    [
+      {
+        items: [
+          item({
+            quantity: "1",
+            allocations: [
+              { quantity: "1", receiptItem: { effectiveUnitCost: "60" } },
+            ],
+          }),
+        ],
+      },
+    ],
+    [
+      {
+        productId: "q",
+        supplierId: "s",
+        roundId: "r",
+        quantity: "5",
+        unitCost: "60",
+        free: "1",
+        withdrawals: [
+          { reason: "LOSS", quantity: "2" },
+          { reason: "SAMPLE", quantity: "1" },
+        ],
+      },
+      {
+        productId: "q",
+        supplierId: "s",
+        roundId: "other",
+        quantity: "3",
+        unitCost: "50",
+        free: "3",
+        withdrawals: [{ reason: "LOSS", quantity: "3" }],
+      },
+    ],
+  );
+  assert.equal(view.absorbed.loss.cost, "120.00");
+  assert.equal(view.absorbed.sample.pounds, "1");
+  assert.equal(view.absorbed.total, "180.00");
+  assert.equal(view.absorbed.kept.cost, "60.00");
+  assert.equal(view.result, "-150.00");
+});

@@ -7,7 +7,8 @@ Reglas de negocio acordadas: [`docs/domain-roadmap.md`](docs/domain-roadmap.md).
 ## Qué hace hoy
 
 - **Catálogos:** clientes y proveedores con teléfono y código de país (por defecto `+504`); los proveedores tienen además un contacto de entrega. Productos con precio de venta, costo estimado y proveedor habitual.
-- **Ciclos (rondas):** agrupan encargos. Un ciclo cerrado ya no acepta encargos nuevos ni ediciones. Cerrarlo no liquida el inventario ni las deudas.
+- **Ciclos (rondas):** agrupan encargos y compras. Un ciclo cerrado ya no acepta encargos nuevos ni ediciones. **Cierre guiado** (`GET /rounds/:id/closing`, `POST /rounds/:id/close`): se bloquea si hay encargos sin entregar, y cada libra libre comprada en el ciclo necesita destino (`LOSS`, `SAMPLE`, `PERSONAL` o `KEEP`), así el ciclo termina con su inventario en 0. Cerrar por `PATCH` solo funciona si no hay pendientes ni sobrante. Los cobros pueden seguir después del cierre.
+- **Ventas sin encargo** (`GET/POST /sales`): venden producto libre de cualquier ciclo, con o sin ciclo abierto; se entregan al registrarse, el cobro es opcional (si no, queda como saldo) y cuentan en el ciclo del primer lote que consumen. Sin cliente se registran a "Cliente de paso". No se editan como encargos.
 - **Encargos:** cantidades en libras y medias libras. Cada línea es `PREORDER` (se compra al proveedor) o `STOCK` (se vende del inventario libre). Cada línea guarda su precio y su costo estimado del momento, así que cambiar el catálogo no altera encargos existentes. Si se envía `totalAmount`, se respeta ese total exacto y el precio unitario se deriva de él. Las ediciones requieren `version`.
 - **Compras a proveedores:** una compra pertenece a un ciclo y a un proveedor. Puede recibirse en varias recepciones parciales, cada una con factura, descuento por libra y descuento global. El descuento global se reparte en centavos exactos por mayor residuo. Cada línea recibida es un **lote** con su costo efectivo. Una recepción del proveedor habitual actualiza el costo estimado del producto; las de proveedores alternos no.
 - **Inventario por lote:** muestra por cada lote lo recibido, lo reservado, lo entregado, lo libre y lo que hay en existencia. Las reservas se asignan automáticamente al encargo más antiguo: las líneas `PREORDER` solo toman lotes de su ciclo, y las `STOCK` toman de cualquier ciclo. Las salidas que no son venta (`SAMPLE`, `PERSONAL`, `LOSS`) solo pueden usar libras libres.
@@ -15,9 +16,10 @@ Reglas de negocio acordadas: [`docs/domain-roadmap.md`](docs/domain-roadmap.md).
 - **Pagos:** abonos en `CASH` o `TRANSFER`, sin superar el saldo pendiente. Anular un pago guarda el motivo y conserva el historial. Cada encargo expone `total`, `paid`, `balance`, `credit`, `paymentStatus` (`UNPAID/PARTIAL/PAID`) y `deliveryStatus` (`ORDERED/PARTIAL/DELIVERED`), que son independientes entre sí.
 - **Lista para proveedores:** agrupa lo que falta comprar por proveedor (`pendingToBuy`), descontando lo ya reservado y lo ya pedido pero no recibido. Las líneas `STOCK` quedan fuera.
 - **Estadísticas e historial de costos:** ventas, costo y ganancia **estimados**, margen, ranking de productos y clientes, en total y por ciclo. Si alguna línea no tiene costo, `estimatedProfit` queda en `null` y `partial` da la ganancia de las líneas con costo junto con su cobertura (`coverage`, en % de las ventas); nunca se toma un costo faltante como cero. Cobranza por período: `collected`, `outstanding`, `credit` y `debtors` (saldo pendiente por cliente, de mayor a menor). El historial de costos de un producto se construye con sus lotes.
+- **Gasto absorbido** (`absorbed` y `result` en cada ciclo de `/statistics`): merma, muestras y consumo propio de los lotes del ciclo al costo real, lo que queda en existencia (no es gasto) y el resultado ventas − costo de lo vendido − gasto absorbido.
 - **Costo por ciclo y producto** (`costing` y `productCosts` en cada ciclo de `/statistics`): precio de venta, costo y margen por libra. Regla acordada en `src/costing.ts`: las libras con lote asignado usan el costo real de ese lote; las demás usan el costo promedio de compra del ciclo (mismo producto y proveedor) y, si no hubo compra, el costo estimado guardado en la línea. `costSources` indica cuántas libras salieron de cada fuente.
 
-**Todavía no existe:** gastos operativos, ganancia real en la tarjeta de rentabilidad (sigue siendo estimada), devoluciones o saldo a favor gestionado, datos de conservación del lote (vencimiento, temperatura) ni recordatorios.
+**Todavía no existe:** gastos operativos (transporte, empaque), ganancia real en la tarjeta de rentabilidad (sigue siendo estimada), devoluciones o saldo a favor gestionado, datos de conservación del lote (vencimiento, temperatura) ni recordatorios.
 
 ## Reglas técnicas
 
@@ -73,6 +75,8 @@ Prefijo `/api/v1`. Todo requiere `Authorization: Bearer <token>`, excepto `healt
 | Entregas y pagos | `POST /orders/:id/deliveries`, `POST /orders/:id/payments`, `POST /orders/:id/payments/:paymentId/void` |
 | Compras | `GET /purchases?roundId=`, `POST /purchases`, `PATCH /purchases/:id` (solo con el ciclo abierto; no baja ni quita lo ya recibido), `POST /purchases/:id/receipts` |
 | Inventario | `GET /inventory`, `POST /inventory/withdrawals` |
+| Ventas sin encargo | `GET /sales`, `POST /sales` |
+| Cierre de ciclo | `GET /rounds/:id/closing`, `POST /rounds/:id/close` |
 | Reportes | `GET /statistics`, `GET /products/:id/cost-history` |
 | Salud | `GET /health`, `GET /health/ready` (verifica PostgreSQL) |
 
