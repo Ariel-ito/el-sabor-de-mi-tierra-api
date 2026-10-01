@@ -5,8 +5,10 @@ import {
   Controller,
   Get,
   Inject,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -14,8 +16,9 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
-import { PurchaseDto, ReceiptDto } from "./dto";
+import { PurchaseDto, PurchasePatchDto, ReceiptDto } from "./dto";
 import { allocateStock, stockLock } from "./inventory";
+import { decimal } from "./math";
 import { purchaseInclude, receive } from "./purchases";
 @ApiBearerAuth()
 @Controller()
@@ -78,6 +81,77 @@ export class PurchasesController {
         null,
         after,
       );
+      return after;
+    });
+  }
+  // Editable only while its cycle is open; received pounds are history and
+  // cannot be removed, so lines may grow or be added but never drop below them.
+  @Patch("purchases/:id") patchPurchase(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: PurchasePatchDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      const current = await tx.purchase.findUnique({ where: { id } });
+      if (!current) throw new NotFoundException("Compra no encontrada");
+      const round = await lockRound(tx, current.roundId);
+      if (round.status !== "OPEN")
+        throw new ConflictException(
+          "El ciclo está cerrado. Reábrelo para editar la compra.",
+        );
+      await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id=${id}::uuid FOR UPDATE`;
+      const before = await tx.purchase.findUniqueOrThrow({
+        where: { id },
+        include: purchaseInclude,
+      });
+      if (before.version !== body.version)
+        throw new ConflictException(
+          "La compra cambió; actualiza antes de editarla.",
+        );
+      if (
+        new Set(body.items.map((i) => i.productId)).size !== body.items.length
+      )
+        throw new BadRequestException("Producto repetido");
+      const received = (itemId: string) =>
+        before.receipts
+          .flatMap((r) => r.items)
+          .filter((r) => r.purchaseItemId === itemId)
+          .reduce((s, r) => s.add(r.quantity), decimal(0));
+      for (const old of before.items) {
+        const next = body.items.find((i) => i.productId === old.productId);
+        const got = received(old.id);
+        if (got.gt(next?.quantity ?? 0))
+          throw new BadRequestException(
+            next
+              ? `${old.product.name}: ya se recibieron ${got} lb; no puedes pedir menos.`
+              : `${old.product.name}: ya se recibieron ${got} lb; no puedes quitarlo.`,
+          );
+        if (!next) await tx.purchaseItem.delete({ where: { id: old.id } });
+        else
+          await tx.purchaseItem.update({
+            where: { id: old.id },
+            data: {
+              quantity: next.quantity,
+              quotedUnitCost: next.quotedUnitCost,
+            },
+          });
+      }
+      const added = body.items.filter(
+        (i) => !before.items.some((o) => o.productId === i.productId),
+      );
+      if (added.length)
+        await tx.purchaseItem.createMany({
+          data: added.map((i) => ({ ...i, purchaseId: id })),
+        });
+      await tx.purchase.update({
+        where: { id },
+        data: { version: { increment: 1 } },
+      });
+      const after = await tx.purchase.findUniqueOrThrow({
+        where: { id },
+        include: purchaseInclude,
+      });
+      await audit(tx, req.actor.id, "Purchase", id, "UPDATE", before, after);
       return after;
     });
   }

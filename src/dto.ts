@@ -212,6 +212,15 @@ export class PurchaseDto {
   @Type(() => PurchaseLineDto)
   items!: PurchaseLineDto[];
 }
+export class PurchasePatchDto {
+  @IsInt() @Min(1) version!: number;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => PurchaseLineDto)
+  items!: PurchaseLineDto[];
+}
 export class ReceiptLineDto {
   @IsUUID() purchaseItemId!: string;
   @Matches(QUANTITY) quantity!: string;
