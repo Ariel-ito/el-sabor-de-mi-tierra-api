@@ -110,6 +110,7 @@ check(sold['roundId']==r['id'] and free()==before-1,'sale consumes free stock an
 check(good('POST','/sales',sale)['id']==sold['id'] and free()==before-1,'sale retry is idempotent')
 check(all(x['id']!=sold['id'] for x in good('GET',f"/orders?roundId={r['id']}")),'walk-in sales stay out of the encargo list')
 check(any(x['id']==sold['id'] for x in good('GET','/sales')),'walk-in sales are listed apart')
+check(any(x['id']==sold['id'] for x in good('GET',f"/sales?roundId={r['id']}")) and all(x['roundId']==r['id'] for x in good('GET',f"/sales?roundId={r['id']}")),'walk-in sales list by cycle')
 check(call('POST','/sales',{**sale,'id':uid(),'items':[{**sale['items'][0],'quantity':'500'}]})[0]==400,'cannot sell more than free stock')
 check(call('PATCH',f"/orders/{sold['id']}",{'version':sold['version'],'notes':'x'})[0]==400,'walk-in sales are not edited as encargos')
 unpaid={'id':uid(),'soldAt':sale['soldAt'],'items':[{**sale['items'][0],'quantity':'0.5'}]}

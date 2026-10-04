@@ -6,7 +6,9 @@ import {
   Controller,
   Get,
   Inject,
+  ParseUUIDPipe,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -27,13 +29,16 @@ export const WALK_IN = "Cliente de paso";
 @UseGuards(AuthGuard)
 export class SalesController {
   constructor(@Inject(Db) private db: Db) {}
-  @Get("sales") async sales() {
+  // With roundId, every walk-in sale counted in that cycle; otherwise the latest.
+  @Get("sales") async sales(
+    @Query("roundId", new ParseUUIDPipe({ optional: true })) roundId?: string,
+  ) {
     return (
       await this.db.order.findMany({
-        where: { kind: "DIRECT" },
+        where: { kind: "DIRECT", ...(roundId ? { roundId } : {}) },
         include: { ...orderInclude, round: true },
         orderBy: { createdAt: "desc" },
-        take: 100,
+        ...(roundId ? {} : { take: 100 }),
       })
     ).map(serializeOrder);
   }
