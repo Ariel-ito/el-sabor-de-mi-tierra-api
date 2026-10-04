@@ -84,8 +84,8 @@ export class PurchasesController {
       return after;
     });
   }
-  // Editable only while its cycle is open; received pounds are history and
-  // cannot be removed, so lines may grow or be added but never drop below them.
+  // Editable only while its cycle is open and before any invoice is recorded;
+  // after that the purchase is history and changes go in an additional one.
   @Patch("purchases/:id") patchPurchase(
     @Param("id", ParseUUIDPipe) id: string,
     @Body() body: PurchasePatchDto,
@@ -104,6 +104,10 @@ export class PurchasesController {
         where: { id },
         include: purchaseInclude,
       });
+      if (before.receipts.length)
+        throw new ConflictException(
+          "Esta compra ya tiene factura registrada y no se edita. Registra una compra adicional para los cambios.",
+        );
       if (before.version !== body.version)
         throw new ConflictException(
           "La compra cambió; actualiza antes de editarla.",

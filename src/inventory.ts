@@ -57,27 +57,36 @@ export async function inventory(tx: Prisma.TransactionClient) {
 }
 // Fill unreserved quantities oldest encargo first. Existing assignments remain
 // attached to their receipt, including delivered quantities, across cycle closes.
+// Pass 1 matches the line's supplier for every line; pass 2 lets encargos
+// still short take the same product from another supplier of their cycle, so
+// buying elsewhere never strands an encargo nor steals a supplier's own lots.
 export async function allocateStock(tx: Prisma.TransactionClient) {
   const lots = await inventory(tx);
   const items = await tx.orderItem.findMany({
     include: { allocations: true, order: true },
     orderBy: [{ order: { createdAt: "asc" } }, { id: "asc" }],
   });
-  for (const item of items) {
-    let need = item.quantity.sub(
-      item.allocations.reduce((s, a) => s.add(a.quantity), decimal(0)),
-    );
+  const need = new Map(
+    items.map((item) => [
+      item.id,
+      item.quantity.sub(
+        item.allocations.reduce((s, a) => s.add(a.quantity), decimal(0)),
+      ),
+    ]),
+  );
+  const fill = async (item: (typeof items)[number], anySupplier: boolean) => {
+    let left = need.get(item.id)!;
     for (const lot of lots) {
-      if (need.lte(0)) break;
+      if (left.lte(0)) break;
       if (item.source !== "STOCK" && lot.roundId !== item.order.roundId)
         continue;
       if (
         lot.productId !== item.productId ||
-        lot.supplierId !== item.supplierId ||
+        (!anySupplier && lot.supplierId !== item.supplierId) ||
         decimal(lot.available).lte(0)
       )
         continue;
-      const take = Prisma.Decimal.min(need, decimal(lot.available));
+      const take = Prisma.Decimal.min(left, decimal(lot.available));
       await tx.stockAllocation.upsert({
         where: {
           receiptItemId_orderItemId: {
@@ -89,13 +98,20 @@ export async function allocateStock(tx: Prisma.TransactionClient) {
         update: { quantity: { increment: take } },
       });
       lot.available = decimal(lot.available).sub(take).toString();
-      need = need.sub(take);
+      left = left.sub(take);
     }
-    if (item.source === "STOCK" && need.gt(0))
+    need.set(item.id, left);
+  };
+  for (const item of items) {
+    await fill(item, false);
+    if (item.source === "STOCK" && need.get(item.id)!.gt(0))
       throw new ConflictException(
         "No hay suficientes libras libres de este producto. Actualiza el inventario.",
       );
   }
+  for (const item of items)
+    if (item.source !== "STOCK" && need.get(item.id)!.gt(0))
+      await fill(item, true);
 }
 export async function releaseForEdit(
   tx: Prisma.TransactionClient,
