@@ -75,7 +75,7 @@ Prefijo `/api/v1`. Todo requiere `Authorization: Bearer <token>`, excepto `healt
 | Entregas y pagos | `POST /orders/:id/deliveries`, `POST /orders/:id/payments`, `POST /orders/:id/payments/:paymentId/void` |
 | Compras | `GET /purchases?roundId=`, `POST /purchases`, `PATCH /purchases/:id` (solo con el ciclo abierto y antes de registrar factura; después, los cambios van en una compra adicional), `POST /purchases/:id/receipts` |
 | Inventario | `GET /inventory`, `POST /inventory/withdrawals` |
-| Ventas sin encargo | `GET /sales?roundId=`, `POST /sales` |
+| Ventas sin encargo | `GET /sales?roundId=`, `POST /sales` (con `roundId`: vende del inventario de ese ciclo), `PATCH /sales/:id`, `DELETE /sales/:id?version=` (solo con el ciclo abierto) |
 | Cierre de ciclo | `GET /rounds/:id/closing`, `POST /rounds/:id/close` |
 | Reportes | `GET /statistics`, `GET /products/:id/cost-history` |
 | Salud | `GET /health`, `GET /health/ready` (verifica PostgreSQL) |

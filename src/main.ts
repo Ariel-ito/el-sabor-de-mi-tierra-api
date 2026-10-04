@@ -25,7 +25,7 @@ async function main() {
     app.getHttpAdapter().getInstance().set("trust proxy", 1);
   app.enableCors({
     origin: origins,
-    methods: ["GET", "POST", "PATCH", "OPTIONS"],
+    methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
   });
   app.setGlobalPrefix("api/v1");

@@ -236,6 +236,8 @@ export class SalePaymentDto {
 }
 export class SaleDto {
   @IsUUID() id!: string;
+  // Cycle whose free stock is sold; defaults to that of the oldest free lot.
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() roundId?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsUUID() customerId?: string;
   @IsDateString({ strict: true }) soldAt!: string;
   @ValidateIf((_o, v) => v !== undefined)
@@ -252,6 +254,21 @@ export class SaleDto {
   @ValidateNested()
   @Type(() => SalePaymentDto)
   payment?: SalePaymentDto;
+}
+export class SalePatchDto {
+  @IsInt() @Min(1) version!: number;
+  // Omitted means Cliente de paso.
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() customerId?: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => SaleLineDto)
+  items!: SaleLineDto[];
 }
 export class PurchasePatchDto {
   @IsInt() @Min(1) version!: number;

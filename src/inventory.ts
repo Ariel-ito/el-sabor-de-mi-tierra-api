@@ -78,8 +78,10 @@ export async function allocateStock(tx: Prisma.TransactionClient) {
     let left = need.get(item.id)!;
     for (const lot of lots) {
       if (left.lte(0)) break;
-      if (item.source !== "STOCK" && lot.roundId !== item.order.roundId)
-        continue;
+      // Encargo lines and walk-in sales draw from their own cycle; STOCK lines
+      // added to an encargo may use free stock of any cycle.
+      const ownCycle = item.source !== "STOCK" || item.order.kind === "DIRECT";
+      if (ownCycle && lot.roundId !== item.order.roundId) continue;
       if (
         lot.productId !== item.productId ||
         (!anySupplier && lot.supplierId !== item.supplierId) ||
