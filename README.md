@@ -19,7 +19,9 @@ Reglas de negocio acordadas: [`docs/domain-roadmap.md`](docs/domain-roadmap.md).
 - **Gasto absorbido** (`absorbed` y `result` en cada ciclo de `/statistics`): merma, muestras y consumo propio de los lotes del ciclo al costo real, lo que queda en existencia (no es gasto) y el resultado ventas − costo de lo vendido − gasto absorbido.
 - **Costo por ciclo y producto** (`costing` y `productCosts` en cada ciclo de `/statistics`): precio de venta, costo y margen por libra. Regla acordada en `src/costing.ts`: las libras con lote asignado usan el costo real de ese lote; las demás usan el costo promedio de compra del ciclo (mismo producto y proveedor) y, si no hubo compra, el costo estimado guardado en la línea. `costSources` indica cuántas libras salieron de cada fuente.
 
-**Todavía no existe:** gastos operativos (transporte, empaque), ganancia real en la tarjeta de rentabilidad (sigue siendo estimada), devoluciones o saldo a favor gestionado, datos de conservación del lote (vencimiento, temperatura) ni recordatorios.
+- **Contabilidad** (`/finance/*`, lógica en `src/finance.ts`): categorías fijas de ingreso y gasto (las del sistema solo se renombran; una usada se desactiva en vez de borrarse; `inResult=false` para aportes, préstamos y repartos). El libro mezcla movimientos manuales con los automáticos: cada cobro no anulado es "Venta" y cada factura de proveedor es "Compra de producto". Un gasto pagado por un dueño de su bolsa se marca `REIMBURSE` (queda por devolver) o `CONTRIBUTE` (aporte que suma valor, no cambia la propiedad 50/50). Los gastos recurrentes generan solos un movimiento `PENDING` por período vencido; se marcan pagados o, al eliminarlos, quedan `SKIPPED`. Dueños fijos: Ariel Martínez y María Borjas, 50/50. El reparto crea dos movimientos con el mismo `groupId` y no puede superar la ganancia disponible (ganancia acumulada − repartido). Los meses se cuentan en hora de Honduras.
+
+**Todavía no existe:** ganancia real en la tarjeta de rentabilidad (sigue siendo estimada), devoluciones o saldo a favor gestionado, datos de conservación del lote (vencimiento, temperatura) ni recordatorios.
 
 ## Reglas técnicas
 
@@ -31,14 +33,14 @@ Reglas de negocio acordadas: [`docs/domain-roadmap.md`](docs/domain-roadmap.md).
 
 ## Estructura de `src/`
 
-| Archivo | Contenido |
-|---|---|
-| `app.ts`, `main.ts` | Módulo Nest y arranque (CORS, helmet, validación, Swagger) |
-| `core.ts` | Cliente Prisma, `AuthGuard`, `audit()`, `lockRound()` |
-| `errors.ts` | Filtro global de errores |
-| `*.controller.ts` | Rutas por dominio: `health`, `auth`, `catalog`, `rounds` (con lista para proveedores y estadísticas), `orders` (con entregas y pagos), `purchases`, `inventory` |
-| `inventory.ts`, `purchases.ts`, `math.ts` | Lógica sin HTTP: reservas, recepciones y descuentos, dinero, serialización y métricas |
-| `dto.ts`, `security.ts` | Validación de entrada y hashing de contraseñas y tokens |
+| Archivo                                                                             | Contenido                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.ts`, `main.ts`                                                                 | Módulo Nest y arranque (CORS, helmet, validación, Swagger)                                                                                                                          |
+| `core.ts`                                                                           | Cliente Prisma, `AuthGuard`, `audit()`, `lockRound()`                                                                                                                               |
+| `errors.ts`                                                                         | Filtro global de errores                                                                                                                                                            |
+| `*.controller.ts`                                                                   | Rutas por dominio: `health`, `auth`, `catalog`, `rounds` (con lista para proveedores y estadísticas), `orders` (con entregas y pagos), `purchases`, `inventory`, `sales`, `finance` |
+| `inventory.ts`, `purchases.ts`, `math.ts`, `costing.ts`, `closing.ts`, `finance.ts` | Lógica sin HTTP: reservas, recepciones y descuentos, dinero, serialización y métricas                                                                                               |
+| `dto.ts`, `security.ts`                                                             | Validación de entrada y hashing de contraseñas y tokens                                                                                                                             |
 
 ## Desarrollo local
 
@@ -66,19 +68,20 @@ Las sesiones duran 8 horas y `logout` las revoca. El login se limita a 10 intent
 
 Prefijo `/api/v1`. Todo requiere `Authorization: Bearer <token>`, excepto `health` y `auth/login`. Las respuestas no llevan envoltorio; los errores tienen la forma `{statusCode, message}`.
 
-| Área | Rutas |
-|---|---|
-| Auth | `POST /auth/login`, `GET /auth/me`, `POST /auth/logout` |
-| Catálogos | `GET/POST /customers`, `/suppliers`, `/products`; `PATCH /customers/:id`, `/suppliers/:id`, `/products/:id` |
-| Ciclos | `GET/POST /rounds`, `PATCH /rounds/:id`, `GET /rounds/:id/purchase-summary` |
-| Encargos | `GET /orders?roundId=`, `POST /orders`, `PATCH /orders/:id` |
-| Entregas y pagos | `POST /orders/:id/deliveries`, `POST /orders/:id/payments`, `POST /orders/:id/payments/:paymentId/void` |
-| Compras | `GET /purchases?roundId=`, `POST /purchases`, `PATCH /purchases/:id` (solo con el ciclo abierto y antes de registrar factura; después, los cambios van en una compra adicional), `POST /purchases/:id/receipts` |
-| Inventario | `GET /inventory`, `POST /inventory/withdrawals` |
-| Ventas sin encargo | `GET /sales?roundId=`, `POST /sales` (con `roundId`: vende del inventario de ese ciclo), `PATCH /sales/:id`, `DELETE /sales/:id?version=` (solo con el ciclo abierto) |
-| Cierre de ciclo | `GET /rounds/:id/closing`, `POST /rounds/:id/close` |
-| Reportes | `GET /statistics`, `GET /products/:id/cost-history` |
-| Salud | `GET /health`, `GET /health/ready` (verifica PostgreSQL) |
+| Área               | Rutas                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Auth               | `POST /auth/login`, `GET /auth/me`, `POST /auth/logout`                                                                                                                                                                                                                                                                                                                                                                                          |
+| Catálogos          | `GET/POST /customers`, `/suppliers`, `/products`; `PATCH /customers/:id`, `/suppliers/:id`, `/products/:id`                                                                                                                                                                                                                                                                                                                                      |
+| Ciclos             | `GET/POST /rounds`, `PATCH /rounds/:id`, `GET /rounds/:id/purchase-summary`                                                                                                                                                                                                                                                                                                                                                                      |
+| Encargos           | `GET /orders?roundId=`, `POST /orders`, `PATCH /orders/:id`                                                                                                                                                                                                                                                                                                                                                                                      |
+| Entregas y pagos   | `POST /orders/:id/deliveries`, `POST /orders/:id/payments`, `POST /orders/:id/payments/:paymentId/void`                                                                                                                                                                                                                                                                                                                                          |
+| Compras            | `GET /purchases?roundId=`, `POST /purchases`, `PATCH /purchases/:id` (solo con el ciclo abierto y antes de registrar factura; después, los cambios van en una compra adicional), `POST /purchases/:id/receipts`                                                                                                                                                                                                                                  |
+| Inventario         | `GET /inventory`, `POST /inventory/withdrawals`                                                                                                                                                                                                                                                                                                                                                                                                  |
+| Ventas sin encargo | `GET /sales?roundId=`, `POST /sales` (con `roundId`: vende del inventario de ese ciclo), `PATCH /sales/:id`, `DELETE /sales/:id?version=` (solo con el ciclo abierto)                                                                                                                                                                                                                                                                            |
+| Cierre de ciclo    | `GET /rounds/:id/closing`, `POST /rounds/:id/close`                                                                                                                                                                                                                                                                                                                                                                                              |
+| Contabilidad       | `GET/POST /finance/categories`, `PATCH/DELETE /finance/categories/:id`, `GET /finance/ledger?month=AAAA-MM`, `POST /finance/movements`, `PATCH /finance/movements/:id`, `DELETE /finance/movements/:id?version=`, `POST /finance/movements/:id/pay`, `POST /finance/movements/:id/reimburse`, `GET/POST /finance/recurring`, `PATCH /finance/recurring/:id`, `POST /finance/distributions`, `GET /finance/summary?month=`, `GET /finance/owners` |
+| Reportes           | `GET /statistics`, `GET /products/:id/cost-history`                                                                                                                                                                                                                                                                                                                                                                                              |
+| Salud              | `GET /health`, `GET /health/ready` (verifica PostgreSQL)                                                                                                                                                                                                                                                                                                                                                                                         |
 
 Con `ENABLE_API_DOCS=true` se publica OpenAPI en `/api/docs` (y el JSON en `/api/docs-json`).
 

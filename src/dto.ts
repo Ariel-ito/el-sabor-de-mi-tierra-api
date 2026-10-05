@@ -342,3 +342,72 @@ export class WithdrawalDto {
   @MaxLength(2000)
   notes?: string;
 }
+const OPTIONAL = (_o: object, v: unknown) => v !== undefined && v !== null;
+export class FinanceCategoryDto {
+  @IsString() @MinLength(1) @MaxLength(80) @Matches(/\S/) name!: string;
+  @IsIn(["INCOME", "EXPENSE"]) kind!: string;
+  @ValidateIf(OPTIONAL) @IsBoolean() inResult?: boolean;
+}
+export class FinanceCategoryPatchDto {
+  @ValidateIf(OPTIONAL)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  @Matches(/\S/)
+  name?: string;
+  @ValidateIf(OPTIONAL) @IsBoolean() inResult?: boolean;
+  @ValidateIf(OPTIONAL) @IsBoolean() active?: boolean;
+}
+export class MovementDto {
+  @IsUUID() id!: string;
+  @IsIn(["INCOME", "EXPENSE"]) kind!: string;
+  @IsDateString({ strict: true }) date!: string;
+  @Matches(MONEY) amount!: string;
+  @IsUUID() categoryId!: string;
+  @IsString() @MinLength(1) @MaxLength(300) @Matches(/\S/) description!: string;
+  @ValidateIf(OPTIONAL) @IsIn(["CASH", "TRANSFER"]) method?: string | null;
+  @ValidateIf(OPTIONAL) @IsIn(["BUSINESS", "ARIEL", "MARIA"]) paidBy?: string;
+  @ValidateIf(OPTIONAL) @IsIn(["REIMBURSE", "CONTRIBUTE"]) personalMode?:
+    string | null;
+  @ValidateIf(OPTIONAL) @IsIn(["ARIEL", "MARIA"]) owner?: string | null;
+  @ValidateIf(OPTIONAL) @IsUUID() roundId?: string | null;
+}
+export class MovementPatchDto extends MovementDto {
+  @IsInt() @Min(1) version!: number;
+}
+export class MovementPayDto {
+  @IsInt() @Min(1) version!: number;
+  @IsDateString({ strict: true }) date!: string;
+  @Matches(MONEY) amount!: string;
+  @ValidateIf(OPTIONAL) @IsIn(["CASH", "TRANSFER"]) method?: string | null;
+  @ValidateIf(OPTIONAL) @IsIn(["BUSINESS", "ARIEL", "MARIA"]) paidBy?: string;
+  @ValidateIf(OPTIONAL) @IsIn(["REIMBURSE", "CONTRIBUTE"]) personalMode?:
+    string | null;
+}
+export class ReimburseDto {
+  @IsInt() @Min(1) version!: number;
+  @IsDateString({ strict: true }) date!: string;
+}
+export class RecurringDto {
+  @IsString() @MinLength(1) @MaxLength(300) @Matches(/\S/) description!: string;
+  @IsUUID() categoryId!: string;
+  @Matches(MONEY) amount!: string;
+  @IsIn(["WEEKLY", "BIWEEKLY", "MONTHLY"]) frequency!: string;
+  @IsInt() @Min(0) day!: number;
+  @IsDateString({ strict: true }) startsOn!: string;
+}
+export class RecurringPatchDto extends RecurringDto {
+  @IsInt() @Min(1) version!: number;
+  @IsBoolean() active!: boolean;
+}
+export class DistributionDto {
+  @IsUUID() id!: string;
+  @IsDateString({ strict: true }) date!: string;
+  @Matches(MONEY) ariel!: string;
+  @Matches(MONEY) maria!: string;
+  @ValidateIf(OPTIONAL) @IsIn(["CASH", "TRANSFER"]) method?: string | null;
+  @ValidateIf(OPTIONAL)
+  @IsString()
+  @MaxLength(300)
+  description?: string;
+}

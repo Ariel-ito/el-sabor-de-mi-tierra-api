@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { AuthController } from "./auth.controller";
 import { CatalogController } from "./catalog.controller";
 import { AuthGuard, Db } from "./core";
+import { FinanceController } from "./finance.controller";
 import { HealthController } from "./health.controller";
 import { InventoryController } from "./inventory.controller";
 import { OrdersController } from "./orders.controller";
@@ -18,6 +19,7 @@ import { SalesController } from "./sales.controller";
     InventoryController,
     PurchasesController,
     SalesController,
+    FinanceController,
   ],
   providers: [Db, AuthGuard],
 })
