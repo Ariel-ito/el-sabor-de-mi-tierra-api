@@ -411,3 +411,8 @@ export class DistributionDto {
   @MaxLength(300)
   description?: string;
 }
+export class CarryDto {
+  @IsInt() @Min(1) version!: number;
+  // Null brings the line back to its own cycle.
+  @ValidateIf(OPTIONAL) @IsUUID() roundId?: string | null;
+}

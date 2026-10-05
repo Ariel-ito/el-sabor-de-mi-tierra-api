@@ -23,21 +23,79 @@ export async function closingState(
     },
     orderBy: { createdAt: "asc" },
   });
-  const pendingDeliveries = orders.flatMap((o) => {
-    const items = o.items.flatMap((i) => {
-      const delivered = i.allocations.reduce(
-        (s, a) => s.add(a.delivered),
-        decimal(0),
-      );
-      const pending = i.quantity.sub(delivered);
-      return pending.gt(0)
-        ? [{ name: i.product.name, pending: pending.toString() }]
-        : [];
-    });
-    return items.length
-      ? [{ orderId: o.id, customerName: o.customer.name, items }]
-      : [];
+  const pendingOf = (i: {
+    quantity: Prisma.Decimal;
+    allocations: { delivered: Prisma.Decimal }[];
+  }) =>
+    i.quantity.sub(
+      i.allocations.reduce((s, a) => s.add(a.delivered), decimal(0)),
+    );
+  // Lines carried to another cycle are delivered there and do not hold this
+  // one open; lines carried here from earlier cycles do.
+  const carriedIn = await tx.orderItem.findMany({
+    where: { fulfillRoundId: roundId, order: { roundId: { not: roundId } } },
+    include: {
+      product: true,
+      allocations: true,
+      order: { include: { customer: true, round: true } },
+    },
   });
+  const pendingDeliveries = [
+    ...orders.flatMap((o) => {
+      const items = o.items.flatMap((i) => {
+        const pending = pendingOf(i);
+        return pending.gt(0) &&
+          !(i.fulfillRoundId && i.fulfillRoundId !== roundId)
+          ? [{ name: i.product.name, pending: pending.toString() }]
+          : [];
+      });
+      return items.length
+        ? [
+            {
+              orderId: o.id,
+              customerName: o.customer.name,
+              fromRound: null,
+              items,
+            },
+          ]
+        : [];
+    }),
+    ...carriedIn.flatMap((i) => {
+      const pending = pendingOf(i);
+      return pending.gt(0)
+        ? [
+            {
+              orderId: i.orderId,
+              customerName: i.order.customer.name,
+              fromRound: i.order.round.name,
+              items: [{ name: i.product.name, pending: pending.toString() }],
+            },
+          ]
+        : [];
+    }),
+  ];
+  const carried = await tx.orderItem.findMany({
+    where: {
+      order: { roundId },
+      fulfillRoundId: { not: null },
+      NOT: { fulfillRoundId: roundId },
+    },
+    include: {
+      product: true,
+      allocations: true,
+      order: { include: { customer: true } },
+      fulfillRound: true,
+    },
+  });
+  const carriedOut = carried
+    .filter((i) => pendingOf(i).gt(0))
+    .map((i) => ({
+      orderId: i.orderId,
+      customerName: i.order.customer.name,
+      name: i.product.name,
+      pending: pendingOf(i).toString(),
+      toRound: i.fulfillRound!.name,
+    }));
   const leftovers = (await inventory(tx))
     .filter((l) => l.roundId === roundId && decimal(l.available).gt(0))
     .map((l) => ({
@@ -49,7 +107,7 @@ export async function closingState(
       available: l.available,
       unitCost: l.unitCost,
     }));
-  return { pendingDeliveries, leftovers };
+  return { pendingDeliveries, leftovers, carriedOut };
 }
 export async function applyClosing(
   tx: Prisma.TransactionClient,

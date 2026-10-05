@@ -82,6 +82,7 @@ model Round {
   createdAt        DateTime          @default(now())
   orders           Order[]
   financeMovements FinanceMovement[]
+  carriedItems     OrderItem[]       @relation("CarriedItems")
 }
 
 model Order {
@@ -120,6 +121,11 @@ model OrderItem {
   quantity          Decimal           @db.Decimal(12, 3)
   unitPrice         Decimal           @db.Decimal(12, 2)
   estimatedUnitCost Decimal?          @db.Decimal(12, 2)
+  // Pending pounds supplied from a later cycle; the sale stays in its own.
+  fulfillRoundId    String?           @db.Uuid
+  fulfillRound      Round?            @relation("CarriedItems", fields: [fulfillRoundId], references: [id])
+
+  @@index([fulfillRoundId])
 }
 
 model AuditLog {

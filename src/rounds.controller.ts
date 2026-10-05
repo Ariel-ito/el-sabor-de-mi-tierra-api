@@ -18,7 +18,7 @@ import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import { cycleCosts, Lot } from "./costing";
 import { applyClosing, closingState } from "./closing";
 import { CloseRoundDto, RoundDto, RoundPatchDto } from "./dto";
-import { allocateStock, stockLock } from "./inventory";
+import { allocateStock, inventory, stockLock } from "./inventory";
 import { decimal, orderInclude, purchaseSummary, statistics } from "./math";
 import { purchaseInclude } from "./purchases";
 @ApiBearerAuth()
@@ -154,10 +154,39 @@ export class RoundsController {
         await stockLock(tx);
         await allocateStock(tx);
         await tx.round.findUniqueOrThrow({ where: { id } });
-        const orders = await tx.order.findMany({
-          where: { roundId: id },
-          include: orderInclude,
-        });
+        const lotRound = new Map(
+          (await inventory(tx)).map((l) => [l.id, l.roundId]),
+        );
+        // A carried line counts in its own cycle only for what that cycle's
+        // lots covered; the rest is bought in the cycle it was carried to.
+        const orders = (
+          await tx.order.findMany({
+            where: {
+              OR: [
+                { roundId: id },
+                { items: { some: { fulfillRoundId: id } } },
+              ],
+            },
+            include: orderInclude,
+          })
+        ).map((o) => ({
+          ...o,
+          items: o.items.flatMap((i) => {
+            if (!i.fulfillRoundId) return o.roundId === id ? [i] : [];
+            const fromOwn = i.allocations
+              .filter((a) => lotRound.get(a.receiptItemId) === o.roundId)
+              .reduce((s, a) => s.add(a.quantity), decimal(0));
+            const quantity =
+              o.roundId === id ? fromOwn : i.quantity.sub(fromOwn);
+            const allocations = i.allocations.filter(
+              (a) => lotRound.get(a.receiptItemId) === id,
+            );
+            return quantity.gt(0) &&
+              (o.roundId === id || i.fulfillRoundId === id)
+              ? [{ ...i, quantity, allocations }]
+              : [];
+          }),
+        }));
         const result = purchaseSummary(id, orders);
         const purchases = await tx.purchase.findMany({
           where: { roundId: id },

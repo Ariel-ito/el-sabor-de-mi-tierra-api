@@ -18,6 +18,7 @@ import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import {
+  CarryDto,
   DeliveryDto,
   OrderDto,
   OrderPatchDto,
@@ -55,6 +56,98 @@ export class OrdersController {
     );
   }
 
+  // Encargos of earlier cycles with pounds to be supplied from this one.
+  @Get("orders/carried") async carried(
+    @Query("roundId", ParseUUIDPipe) roundId: string,
+  ) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        await allocateStock(tx);
+        return (
+          await tx.order.findMany({
+            where: {
+              kind: "ENCARGO",
+              roundId: { not: roundId },
+              items: { some: { fulfillRoundId: roundId } },
+            },
+            include: { ...orderInclude, round: true },
+            orderBy: { createdAt: "asc" },
+          })
+        ).map(serializeOrder);
+      },
+      { timeout: 15000 },
+    );
+  }
+  // Supply a line's pending pounds from another open cycle. The sale and its
+  // payments stay in the encargo's own cycle.
+  @Post("orders/:id/items/:itemId/carry") carry(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("itemId", ParseUUIDPipe) itemId: string,
+    @Body() body: CarryDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const before = await tx.order.findUnique({
+          where: { id },
+          include: orderInclude,
+        });
+        if (!before || before.kind !== "ENCARGO")
+          throw new NotFoundException("Encargo no encontrado.");
+        if (before.version !== body.version)
+          throw new ConflictException("El encargo cambió; actualiza antes.");
+        const item = before.items.find((i) => i.id === itemId);
+        if (!item) throw new BadRequestException("Producto ajeno al encargo.");
+        if (item.source === "STOCK")
+          throw new BadRequestException(
+            "Las líneas de inventario ya pueden tomar producto de cualquier ciclo.",
+          );
+        const delivered = item.allocations.reduce(
+          (s, a) => s.add(a.delivered),
+          decimal(0),
+        );
+        if (body.roundId) {
+          if (delivered.gte(item.quantity))
+            throw new BadRequestException("Esta línea ya está entregada.");
+          if (body.roundId === before.roundId)
+            throw new BadRequestException(
+              "Elige un ciclo distinto al del encargo.",
+            );
+          const target = await lockRound(tx, body.roundId);
+          if (target.status !== "OPEN")
+            throw new BadRequestException(
+              "El ciclo destino debe estar abierto.",
+            );
+        } else {
+          const own = await lockRound(tx, before.roundId);
+          if (own.status !== "OPEN" && delivered.lt(item.quantity))
+            throw new BadRequestException(
+              "El ciclo del encargo está cerrado; la línea debe entregarse en otro ciclo.",
+            );
+        }
+        // Re-reserve from scratch so stock of the previous destination is freed.
+        await releaseForEdit(tx, item.id, item.quantity.toString());
+        await tx.orderItem.update({
+          where: { id: item.id },
+          data: { fulfillRoundId: body.roundId ?? null },
+        });
+        await tx.order.update({
+          where: { id },
+          data: { version: { increment: 1 } },
+        });
+        await allocateStock(tx);
+        const after = await tx.order.findUniqueOrThrow({
+          where: { id },
+          include: orderInclude,
+        });
+        await audit(tx, req.actor.id, "Order", id, "CARRY", before, after);
+        return serializeOrder(after);
+      },
+      { timeout: 15000 },
+    );
+  }
   @Post("orders") createOrder(@Body() body: OrderDto, @Req() req: AuthRequest) {
     return this.db.$transaction(async (tx) => {
       await stockLock(tx);
