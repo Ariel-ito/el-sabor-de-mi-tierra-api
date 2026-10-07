@@ -281,5 +281,27 @@ check(oa1['credit']=='0.00' and oa1['paymentStatus']=='PAID' and acct()['balance
 good('POST',f"/customers/{ca['id']}/account/refunds",{'id':uid(),'amount':'90','method':'CASH','date':'2026-10-05T12:00:00Z'})
 fin2=good('GET','/finance/summary?month=2026-10')['allTime']
 check(acct()['balance']=='1000.00' and round(float(fin2['cashExpected'])-float(fin1['cashExpected']),2)==160,'refund leaves the till; cash = +250 paid −90 refunded')
+# Vencimiento: duración del producto desde la recepción, o fecha del empaque.
+import datetime as _dt
+now=_dt.datetime.now(_dt.timezone.utc)
+iso=lambda d:d.strftime('%Y-%m-%dT%H:%M:%SZ')
+fresh=good('POST','/products',{'name':'Cuajada '+u,'salePrice':'60','estimatedCost':'35','defaultSupplierId':s['id'],'shelfLifeDays':3,'warnDays':1})
+honey=good('POST','/products',{'name':'Miel '+u,'salePrice':'150','estimatedCost':'90','defaultSupplierId':s['id']})
+check(fresh['shelfLifeDays']==3 and honey['shelfLifeDays'] is None,'products keep their shelf life')
+check(call('PATCH',f"/products/{honey['id']}",{'shelfLifeDays':0})[0]==400,'shelf life must be at least a day')
+c5=good('POST','/rounds',{'name':'Vencimientos '+u,'opensAt':iso(now-_dt.timedelta(days=3)),'closesAt':iso(now+_dt.timedelta(days=5))})
+b5x=good('POST','/purchases',{'id':uid(),'roundId':c5['id'],'supplierId':s['id'],'orderedAt':iso(now-_dt.timedelta(days=3)),'items':[{'productId':fresh['id'],'quantity':'2','quotedUnitCost':'35'},{'productId':honey['id'],'quantity':'2','quotedUnitCost':'90'},{'productId':rq['id'],'quantity':'1','quotedUnitCost':'45'}]})
+pi={i['productId']:i['id'] for i in b5x['items']}
+printed=(now+_dt.timedelta(days=200)).strftime('%Y-%m-%dT18:00:00Z')
+good('POST',f"/purchases/{b5x['id']}/receipts",{'id':uid(),'version':b5x['version'],'receivedAt':iso(now-_dt.timedelta(days=2)),'invoice':'VEN '+u,'globalDiscount':'0','items':[
+  {'purchaseItemId':pi[fresh['id']],'quantity':'2','unitCost':'35','unitDiscount':'0'},
+  {'purchaseItemId':pi[honey['id']],'quantity':'2','unitCost':'90','unitDiscount':'0','expiresAt':printed},
+  {'purchaseItemId':pi[rq['id']],'quantity':'1','unitCost':'45','unitDiscount':'0'}]})
+lots5={l['productId']:l for l in good('GET','/inventory') if l['roundId']==c5['id']}
+check(lots5[fresh['id']]['daysLeft']==1 and lots5[fresh['id']]['expiryStatus']=='SOON','fresh lot counts its days from receipt and warns')
+check(lots5[honey['id']]['expiresAt'].startswith(printed[:10]) and lots5[honey['id']]['expiryStatus']=='OK','printed expiry is kept')
+check(lots5[rq['id']]['expiresAt'] is None,'products without shelf life have no expiry')
+good('PATCH',f"/inventory/lots/{lots5[fresh['id']]['id']}/expiry",{'expiresAt':iso(now-_dt.timedelta(days=2))})
+check(next(l for l in good('GET','/inventory') if l['id']==lots5[fresh['id']]['id'])['expiryStatus']=='EXPIRED','lot expiry can be corrected')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

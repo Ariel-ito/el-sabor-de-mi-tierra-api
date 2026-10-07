@@ -64,6 +64,10 @@ model Product {
   defaultSupplierId String         @db.Uuid
   defaultSupplier   Supplier       @relation(fields: [defaultSupplierId], references: [id])
   active            Boolean        @default(true)
+  // Approximate days a fresh lot lasts from receipt, and how many days
+  // before expiry to warn. Null when it does not apply.
+  shelfLifeDays     Int?
+  warnDays          Int?
   createdAt         DateTime       @default(now())
   items             OrderItem[]
 }
@@ -200,6 +204,8 @@ model ReceiptItem {
   allocatedDiscount Decimal           @db.Decimal(12, 2)
   netTotal          Decimal           @db.Decimal(14, 2)
   effectiveUnitCost Decimal           @db.Decimal(16, 6)
+  // From the product's shelf life, or the date printed on what arrived.
+  expiresAt         DateTime?
 
   @@unique([receiptId, purchaseItemId])
 }

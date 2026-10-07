@@ -12,6 +12,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  Max,
   MaxLength,
   Min,
   MinLength,
@@ -90,6 +91,18 @@ export class ProductDto {
   @ApiProperty() @Matches(MONEY) salePrice!: string;
   @ApiProperty() @Matches(MONEY) estimatedCost!: string;
   @ApiProperty() @IsUUID() defaultSupplierId!: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  shelfLifeDays?: number | null;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  warnDays?: number | null;
 }
 export class ProductPatchDto {
   @ApiPropertyOptional()
@@ -115,6 +128,18 @@ export class ProductPatchDto {
   @ValidateIf((_o, v) => v !== undefined)
   @IsBoolean()
   active?: boolean;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  shelfLifeDays?: number | null;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  warnDays?: number | null;
 }
 export class RoundDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(150) name!: string;
@@ -300,6 +325,10 @@ export class ReceiptLineDto {
   @Matches(QUANTITY) quantity!: string;
   @Matches(MONEY) unitCost!: string;
   @Matches(MONEY) unitDiscount!: string;
+  // Printed expiry; omitted uses the product's shelf life from receipt.
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsDateString({ strict: true })
+  expiresAt?: string;
 }
 export class ReceiptDto {
   @IsUUID() id!: string;
@@ -452,4 +481,10 @@ export class ApplyCreditDto {
 export class OrderCreditDto {
   @IsUUID() id!: string;
   @IsInt() @Min(1) version!: number;
+}
+export class LotExpiryDto {
+  // Null clears it.
+  @ValidateIf((_o, v) => v !== null)
+  @IsDateString({ strict: true })
+  expiresAt!: string | null;
 }

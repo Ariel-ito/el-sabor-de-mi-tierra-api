@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { decimal, money, lineTotal } from "./math";
 import { ReceiptDto } from "./dto";
+const DAY = 86400000;
 export const purchaseInclude = {
   supplier: true,
   round: true,
@@ -83,8 +84,16 @@ export async function receive(
   const allocated = allocateDiscount(amounts, body.globalDiscount);
   const lines = body.items.map((i, n) => {
     const netTotal = decimal(amounts[n]).sub(allocated[n]);
+    const product = purchase.items.find(
+      (p) => p.id === i.purchaseItemId,
+    )!.product;
     return {
       ...i,
+      expiresAt: i.expiresAt
+        ? new Date(i.expiresAt)
+        : product.shelfLifeDays
+          ? new Date(receivedAt.getTime() + product.shelfLifeDays * DAY)
+          : null,
       allocatedDiscount: allocated[n],
       netTotal: money(netTotal),
       effectiveUnitCost: netTotal.div(i.quantity).toDecimalPlaces(6),

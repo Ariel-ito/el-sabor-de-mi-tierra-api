@@ -5,13 +5,17 @@ import {
   Controller,
   Get,
   Inject,
+  NotFoundException,
+  Param,
+  ParseUUIDPipe,
+  Patch,
   Post,
   Req,
   UseGuards,
 } from "@nestjs/common";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db } from "./core";
-import { WithdrawalDto } from "./dto";
+import { LotExpiryDto, WithdrawalDto } from "./dto";
 import { allocateStock, inventory, stockLock } from "./inventory";
 import { decimal } from "./math";
 @ApiBearerAuth()
@@ -28,6 +32,23 @@ export class InventoryController {
       },
       { timeout: 15000 },
     );
+  }
+  // Correct a lot's expiry, e.g. when the real date is known later.
+  @Patch("inventory/lots/:id/expiry") async setExpiry(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: LotExpiryDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      const before = await tx.receiptItem.findUnique({ where: { id } });
+      if (!before) throw new NotFoundException("Lote no encontrado.");
+      const after = await tx.receiptItem.update({
+        where: { id },
+        data: { expiresAt: body.expiresAt ? new Date(body.expiresAt) : null },
+      });
+      await audit(tx, req.actor.id, "ReceiptItem", id, "EXPIRY", before, after);
+      return { id, expiresAt: after.expiresAt };
+    });
   }
   @Post("inventory/withdrawals") async withdraw(
     @Body() body: WithdrawalDto,

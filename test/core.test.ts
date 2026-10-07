@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { ItemDto, ProductPatchDto } from "../src/dto";
+import { expiry } from "../src/inventory";
 import {
   decimal,
   lineTotal,
@@ -73,4 +74,23 @@ test("passwords salted; tokens opaque and only hashes persist", async () => {
   assert.equal(token.length, 43);
   assert.equal(hashToken(token).length, 64);
   assert.notEqual(token, hashToken(token));
+});
+test("expiry counts Honduras calendar days and warns inside the window", () => {
+  const now = new Date("2026-10-07T05:00:00Z"); // 6 Oct, 11 p.m. in Honduras
+  const p = { shelfLifeDays: 5, warnDays: 2 };
+  assert.equal(expiry(null, p, now).expiryStatus, null);
+  assert.deepEqual(
+    [
+      expiry(new Date("2026-10-09T18:00:00Z"), p, now),
+      expiry(new Date("2026-10-08T18:00:00Z"), p, now),
+      expiry(new Date("2026-10-06T18:00:00Z"), p, now),
+      expiry(new Date("2026-10-05T18:00:00Z"), p, now),
+    ].map((e) => [e.daysLeft, e.expiryStatus]),
+    [
+      [3, "OK"],
+      [2, "SOON"],
+      [0, "SOON"],
+      [-1, "EXPIRED"],
+    ],
+  );
 });

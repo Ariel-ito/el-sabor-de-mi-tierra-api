@@ -17,6 +17,23 @@ const lotInclude = {
   allocations: true,
   withdrawals: true,
 } as const;
+const hnDay = (d: Date) => Math.floor((d.getTime() - 6 * 3600000) / 86400000);
+// Days left counted in Honduras calendar days; SOON inside the warning window.
+export function expiry(
+  expiresAt: Date | null,
+  product: { shelfLifeDays: number | null; warnDays: number | null },
+  now = new Date(),
+) {
+  if (!expiresAt)
+    return { expiresAt: null, daysLeft: null, expiryStatus: null };
+  const daysLeft = hnDay(expiresAt) - hnDay(now);
+  const warn = product.warnDays ?? 1;
+  return {
+    expiresAt,
+    daysLeft,
+    expiryStatus: daysLeft < 0 ? "EXPIRED" : daysLeft <= warn ? "SOON" : "OK",
+  };
+}
 export async function inventory(tx: Prisma.TransactionClient) {
   const lots = await tx.receiptItem.findMany({
     include: lotInclude,
@@ -52,6 +69,7 @@ export async function inventory(tx: Prisma.TransactionClient) {
       onHand: l.quantity.sub(delivered).sub(withdrawn).toString(),
       unitCost: l.effectiveUnitCost.toString(),
       withdrawals: l.withdrawals,
+      ...expiry(l.expiresAt, l.purchaseItem.product),
     };
   });
 }
