@@ -360,3 +360,11 @@ model CustomerCredit {
   @@index([customerId])
   @@index([orderId])
 }
+
+// Small texts the owners edit in the app, e.g. payment details.
+model Setting {
+  key       String   @id
+  value     String
+  version   Int      @default(1)
+  updatedAt DateTime @updatedAt
+}

@@ -9,6 +9,7 @@ import { InventoryController } from "./inventory.controller";
 import { OrdersController } from "./orders.controller";
 import { PurchasesController } from "./purchases.controller";
 import { RoundsController } from "./rounds.controller";
+import { SettingsController } from "./settings.controller";
 import { SalesController } from "./sales.controller";
 @Module({
   controllers: [
@@ -22,6 +23,7 @@ import { SalesController } from "./sales.controller";
     SalesController,
     FinanceController,
     AccountsController,
+    SettingsController,
   ],
   providers: [Db, AuthGuard],
 })

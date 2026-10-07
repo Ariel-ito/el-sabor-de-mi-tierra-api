@@ -303,5 +303,13 @@ check(lots5[honey['id']]['expiresAt'].startswith(printed[:10]) and lots5[honey['
 check(lots5[rq['id']]['expiresAt'] is None,'products without shelf life have no expiry')
 good('PATCH',f"/inventory/lots/{lots5[fresh['id']]['id']}/expiry",{'expiresAt':iso(now-_dt.timedelta(days=2))})
 check(next(l for l in good('GET','/inventory') if l['id']==lots5[fresh['id']]['id'])['expiryStatus']=='EXPIRED','lot expiry can be corrected')
+# Datos de pago editables.
+pinfo=good('GET','/settings/paymentInfo')
+check('BAC Credomatic' in pinfo['value'],'payment details are seeded')
+check(call('GET','/settings/otra')[0]==404,'only known settings are exposed')
+check(call('PATCH','/settings/paymentInfo',{'version':pinfo['version']+5,'value':'x'})[0]==409,'stale payment details edit is rejected')
+edited=good('PATCH','/settings/paymentInfo',{'version':pinfo['version'],'value':pinfo['value']+'\n\nPrueba '+u})
+check(edited['version']==pinfo['version']+1 and edited['value'].endswith(u),'payment details can be edited')
+good('PATCH','/settings/paymentInfo',{'version':edited['version'],'value':pinfo['value']})
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

@@ -488,3 +488,7 @@ export class LotExpiryDto {
   @IsDateString({ strict: true })
   expiresAt!: string | null;
 }
+export class SettingTextDto {
+  @IsInt() @Min(1) version!: number;
+  @IsString() @MinLength(1) @MaxLength(2000) @Matches(/\S/) value!: string;
+}
