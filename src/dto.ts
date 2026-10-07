@@ -323,6 +323,10 @@ export class PaymentDto {
   @IsUUID() id!: string;
   @IsInt() @Min(1) version!: number;
   @Matches(MONEY) amount!: string;
+  // An amount above the balance keeps the rest as the customer's credit.
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  excessToAccount?: boolean;
   @IsIn(["CASH", "TRANSFER"]) method!: string;
   @IsDateString({ strict: true }) paidAt!: string;
   @ValidateIf((_o, v) => v !== undefined)
@@ -431,4 +435,21 @@ export class CarryDto {
   @IsInt() @Min(1) version!: number;
   // Null brings the line back to its own cycle.
   @ValidateIf(OPTIONAL) @IsUUID() roundId?: string | null;
+}
+export class AccountMoveDto {
+  @IsUUID() id!: string;
+  @Matches(MONEY) amount!: string;
+  @IsIn(["CASH", "TRANSFER"]) method!: string;
+  @IsDateString({ strict: true }) date!: string;
+  @ValidateIf(OPTIONAL) @IsString() @MaxLength(500) notes?: string;
+}
+export class ApplyCreditDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @Matches(MONEY) amount!: string;
+  @IsDateString({ strict: true }) date!: string;
+}
+export class OrderCreditDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
 }

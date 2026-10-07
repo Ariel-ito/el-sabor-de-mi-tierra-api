@@ -60,7 +60,7 @@ type MovementRow = Prisma.FinanceMovementGetPayload<{
 // Ledger line shared by typed-in movements and those derived from operations.
 type Line = {
   id: string;
-  source: "MANUAL" | "RECURRING" | "INVOICE" | "PAYMENT";
+  source: "MANUAL" | "RECURRING" | "INVOICE" | "PAYMENT" | "ACCOUNT";
   kind: "INCOME" | "EXPENSE";
   status: string;
   date: Date;
@@ -153,31 +153,44 @@ export class FinanceController {
   // Every ledger line, optionally limited to a date range or a cycle.
   private async lines(range?: { start: Date; end: Date }, roundId?: string) {
     const date = range ? { gte: range.start, lt: range.end } : undefined;
-    const [movements, receipts, payments, sale, purchase] = await Promise.all([
-      this.db.financeMovement.findMany({
-        where: { ...(date ? { date } : {}), ...(roundId ? { roundId } : {}) },
-        include: movementInclude,
-      }),
-      this.db.receipt.findMany({
-        where: {
-          ...(date ? { receivedAt: date } : {}),
-          ...(roundId ? { purchase: { roundId } } : {}),
-        },
-        include: {
-          purchase: { include: { supplier: true, round: true } },
-        },
-      }),
-      this.db.payment.findMany({
-        where: {
-          voidedAt: null,
-          ...(date ? { paidAt: date } : {}),
-          ...(roundId ? { order: { roundId } } : {}),
-        },
-        include: { order: { include: { customer: true, round: true } } },
-      }),
-      this.systemCategory(this.db, "SALE"),
-      this.systemCategory(this.db, "PRODUCT_PURCHASE"),
-    ]);
+    const [movements, receipts, payments, sale, purchase, account] =
+      await Promise.all([
+        this.db.financeMovement.findMany({
+          where: { ...(date ? { date } : {}), ...(roundId ? { roundId } : {}) },
+          include: movementInclude,
+        }),
+        this.db.receipt.findMany({
+          where: {
+            ...(date ? { receivedAt: date } : {}),
+            ...(roundId ? { purchase: { roundId } } : {}),
+          },
+          include: {
+            purchase: { include: { supplier: true, round: true } },
+          },
+        }),
+        this.db.payment.findMany({
+          where: {
+            voidedAt: null,
+            // Paid from account credit: that money entered as a deposit.
+            method: { not: "CREDIT" },
+            ...(date ? { paidAt: date } : {}),
+            ...(roundId ? { order: { roundId } } : {}),
+          },
+          include: { order: { include: { customer: true, round: true } } },
+        }),
+        this.systemCategory(this.db, "SALE"),
+        this.systemCategory(this.db, "PRODUCT_PURCHASE"),
+        // Advances received and refunds given from customers' accounts.
+        this.db.customerCredit.findMany({
+          where: {
+            voidedAt: null,
+            kind: { in: ["DEPOSIT", "REFUND"] },
+            ...(date ? { date } : {}),
+            ...(roundId ? { order: { roundId } } : {}),
+          },
+          include: { customer: true, order: { include: { round: true } } },
+        }),
+      ]);
     const auto = {
       status: "PAID",
       paidBy: "BUSINESS",
@@ -213,6 +226,20 @@ export class FinanceController {
         description: `${p.order.kind === "DIRECT" ? "Venta" : "Cobro"} · ${p.order.customer.name}`,
         method: p.method,
         round: { id: p.order.round.id, name: p.order.round.name },
+      })),
+      ...account.map((e): Line => ({
+        ...auto,
+        id: e.id,
+        source: "ACCOUNT",
+        kind: "INCOME",
+        date: e.date,
+        amount: money(e.kind === "REFUND" ? decimal(e.amount).neg() : e.amount),
+        category: sale,
+        description: `${e.kind === "REFUND" ? "Devolución de saldo" : "Saldo a favor"} · ${e.customer.name}`,
+        method: e.method,
+        round: e.order
+          ? { id: e.order.round.id, name: e.order.round.name }
+          : null,
       })),
     ];
     return lines.sort((a, b) => b.date.getTime() - a.date.getTime());

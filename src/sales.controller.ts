@@ -278,6 +278,10 @@ export class SalesController {
       async (tx) => {
         await stockLock(tx);
         const before = await this.editable(tx, id, version);
+        if (await tx.customerCredit.count({ where: { orderId: id } }))
+          throw new ConflictException(
+            "La venta movió saldo de la cuenta del cliente; anula esos movimientos o sus pagos primero.",
+          );
         await clearItems(tx, id);
         await tx.payment.deleteMany({ where: { orderId: id } });
         await tx.order.delete({ where: { id } });

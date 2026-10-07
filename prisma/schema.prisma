@@ -28,13 +28,14 @@ model Session {
 }
 
 model Customer {
-  id               String   @id @default(uuid()) @db.Uuid
+  id               String           @id @default(uuid()) @db.Uuid
   name             String
-  phoneCountryCode String   @default("+504")
+  phoneCountryCode String           @default("+504")
   phone            String?
   notes            String?
-  createdAt        DateTime @default(now())
+  createdAt        DateTime         @default(now())
   orders           Order[]
+  account          CustomerCredit[]
 }
 
 model Supplier {
@@ -88,23 +89,24 @@ model Round {
 model Order {
   // ENCARGO belongs to an open cycle; DIRECT is a walk-in sale from stock,
   // counted in the cycle of the first lot it consumed.
-  kind        String      @default("ENCARGO")
-  payments    Payment[]
-  deliveries  Delivery[]
-  id          String      @id @default(uuid()) @db.Uuid
-  roundId     String      @db.Uuid
-  round       Round       @relation(fields: [roundId], references: [id])
-  customerId  String      @db.Uuid
-  customer    Customer    @relation(fields: [customerId], references: [id])
-  notes       String?
+  kind           String           @default("ENCARGO")
+  payments       Payment[]
+  deliveries     Delivery[]
+  id             String           @id @default(uuid()) @db.Uuid
+  roundId        String           @db.Uuid
+  round          Round            @relation(fields: [roundId], references: [id])
+  customerId     String           @db.Uuid
+  customer       Customer         @relation(fields: [customerId], references: [id])
+  notes          String?
   // PICKUP: the customer collects it. DELIVERY: we take it, charging
   // shippingFee (0 when the delivery is free).
-  delivery    String      @default("PICKUP")
-  shippingFee Decimal     @default(0) @db.Decimal(12, 2)
-  version     Int         @default(1)
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
-  items       OrderItem[]
+  delivery       String           @default("PICKUP")
+  shippingFee    Decimal          @default(0) @db.Decimal(12, 2)
+  version        Int              @default(1)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  items          OrderItem[]
+  accountEntries CustomerCredit[]
 
   @@index([roundId])
   @@index([kind, createdAt])
@@ -226,16 +228,17 @@ model StockWithdrawal {
 }
 
 model Payment {
-  id         String    @id @db.Uuid
-  orderId    String    @db.Uuid
-  order      Order     @relation(fields: [orderId], references: [id])
-  amount     Decimal   @db.Decimal(12, 2)
-  method     String
-  paidAt     DateTime
-  notes      String?
-  voidedAt   DateTime?
-  voidReason String?
-  createdAt  DateTime  @default(now())
+  id           String          @id @db.Uuid
+  orderId      String          @db.Uuid
+  order        Order           @relation(fields: [orderId], references: [id])
+  amount       Decimal         @db.Decimal(12, 2)
+  method       String
+  paidAt       DateTime
+  notes        String?
+  voidedAt     DateTime?
+  voidReason   String?
+  createdAt    DateTime        @default(now())
+  accountEntry CustomerCredit?
 
   @@index([orderId])
 }
@@ -326,4 +329,28 @@ model RecurringExpense {
   version     Int               @default(1)
   createdAt   DateTime          @default(now())
   movements   FinanceMovement[]
+}
+
+// A customer's account: money held for them, to be used on encargos.
+// DEPOSIT: an advance received (cash in). OVERPAY: an order's excess moved
+// here. APPLY: used on an order through a CREDIT payment. REFUND: returned.
+model CustomerCredit {
+  id         String    @id @db.Uuid
+  customerId String    @db.Uuid
+  customer   Customer  @relation(fields: [customerId], references: [id])
+  kind       String
+  amount     Decimal   @db.Decimal(12, 2)
+  method     String?
+  date       DateTime
+  notes      String?
+  orderId    String?   @db.Uuid
+  order      Order?    @relation(fields: [orderId], references: [id])
+  paymentId  String?   @unique @db.Uuid
+  payment    Payment?  @relation(fields: [paymentId], references: [id])
+  voidedAt   DateTime?
+  voidReason String?
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId])
+  @@index([orderId])
 }

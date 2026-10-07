@@ -12,6 +12,8 @@ export const orderInclude = {
   payments: { orderBy: { paidAt: "asc" } },
   deliveries: { include: { items: true }, orderBy: { deliveredAt: "asc" } },
   items: { include: { product: true, supplier: true, allocations: true } },
+  // Excess already moved to the customer's account.
+  accountEntries: { where: { kind: "OVERPAY", voidedAt: null } },
 } as const;
 export const saleTotal = (item: any) =>
   item.totalAmount == null
@@ -126,9 +128,14 @@ export function orderBalance(order: any) {
   const total = order.items
     .reduce((s: Prisma.Decimal, i: any) => s.add(saleTotal(i)), decimal(0))
     .add(shippingOf(order));
+  const moved = (order.accountEntries || []).reduce(
+    (s: Prisma.Decimal, e: any) => s.add(e.amount),
+    decimal(0),
+  );
   const paid = (order.payments || [])
     .filter((p: any) => !p.voidedAt)
-    .reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), decimal(0));
+    .reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), decimal(0))
+    .sub(moved);
   return {
     paid,
     balance: Prisma.Decimal.max(0, total.sub(paid)),

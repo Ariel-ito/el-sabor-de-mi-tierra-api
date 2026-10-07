@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
   Body,
@@ -345,16 +346,38 @@ export class OrdersController {
           "El encargo cambió. Actualiza antes de registrar el pago.",
         );
       const view = serializeOrder(order);
-      if (decimal(body.amount).lte(0) || decimal(body.amount).gt(view.balance))
+      const excess = decimal(body.amount).sub(view.balance);
+      if (
+        decimal(body.amount).lte(0) ||
+        decimal(view.balance).lte(0) ||
+        (excess.gt(0) && !body.excessToAccount)
+      )
         throw new BadRequestException(
           "El abono debe ser mayor a cero y no superar el saldo pendiente.",
         );
       if (new Date(body.paidAt) > new Date())
         throw new BadRequestException("La fecha de pago no puede ser futura.");
-      const { version, ...data } = body;
+      const { version, excessToAccount, ...data } = body;
       const payment = await tx.payment.create({
-        data: { ...data, orderId: id },
+        data: {
+          ...data,
+          amount: excess.gt(0) ? view.balance : data.amount,
+          orderId: id,
+        },
       });
+      if (excess.gt(0))
+        await tx.customerCredit.create({
+          data: {
+            id: randomUUID(),
+            customerId: order.customerId,
+            kind: "DEPOSIT",
+            amount: excess,
+            method: body.method,
+            date: new Date(body.paidAt),
+            notes: "Excedente de un abono",
+            orderId: id,
+          },
+        });
       await tx.order.update({
         where: { id },
         data: { version: { increment: 1 } },
@@ -389,7 +412,21 @@ export class OrdersController {
       });
       if (before.orderId !== id)
         throw new BadRequestException("El pago no pertenece a este encargo.");
+      if (
+        !before.voidedAt &&
+        (await tx.customerCredit.count({
+          where: { orderId: id, kind: "OVERPAY", voidedAt: null },
+        }))
+      )
+        throw new BadRequestException(
+          "Parte de lo pagado se pasó a la cuenta del cliente; anula eso primero.",
+        );
       if (!before.voidedAt) {
+        // A payment made with account credit gives that credit back.
+        await tx.customerCredit.updateMany({
+          where: { paymentId, voidedAt: null },
+          data: { voidedAt: new Date(), voidReason: body.reason },
+        });
         const after = await tx.payment.update({
           where: { id: paymentId },
           data: { voidedAt: new Date(), voidReason: body.reason },
