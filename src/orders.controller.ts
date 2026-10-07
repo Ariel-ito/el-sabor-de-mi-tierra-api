@@ -32,6 +32,18 @@ import {
   stockLock,
 } from "./inventory";
 import { decimal, orderInclude, serializeOrder } from "./math";
+// Pickup never carries a fee; a delivery may be free.
+function shipping(body: { delivery?: string; shippingFee?: string }) {
+  const delivery = body.delivery ?? "PICKUP";
+  if (delivery === "PICKUP" && body.shippingFee && Number(body.shippingFee) > 0)
+    throw new BadRequestException(
+      "Si el cliente retira, el encargo no lleva costo de envío.",
+    );
+  return {
+    delivery,
+    shippingFee: delivery === "DELIVERY" ? (body.shippingFee ?? "0") : "0",
+  };
+}
 @ApiBearerAuth()
 @Controller()
 @UseGuards(AuthGuard)
@@ -164,6 +176,7 @@ export class OrdersController {
           roundId: body.roundId,
           customerId: body.customerId,
           notes: body.notes,
+          ...shipping(body),
           items: { create: items },
         },
         include: orderInclude,
@@ -263,6 +276,16 @@ export class OrdersController {
         data: {
           customerId: body.customerId,
           notes: body.notes,
+          ...(body.delivery || body.shippingFee !== undefined
+            ? shipping({
+                delivery: body.delivery ?? before.delivery,
+                shippingFee:
+                  body.shippingFee ??
+                  ((body.delivery ?? before.delivery) === "PICKUP"
+                    ? "0"
+                    : before.shippingFee.toString()),
+              })
+            : {}),
           version: { increment: 1 },
         },
       });

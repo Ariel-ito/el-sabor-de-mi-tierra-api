@@ -163,6 +163,14 @@ export class OrderDto {
   @ApiProperty() @IsUUID() customerId!: string;
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["PICKUP", "DELIVERY"])
+  delivery?: "PICKUP" | "DELIVERY";
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(MONEY)
+  shippingFee?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsString()
   @MaxLength(2000)
   notes?: string;
@@ -176,6 +184,14 @@ export class OrderDto {
 }
 export class OrderPatchDto {
   @ApiProperty() @IsInt() @Min(1) version!: number;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["PICKUP", "DELIVERY"])
+  delivery?: "PICKUP" | "DELIVERY";
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(MONEY)
+  shippingFee?: string;
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
   @IsUUID()

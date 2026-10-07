@@ -88,19 +88,23 @@ model Round {
 model Order {
   // ENCARGO belongs to an open cycle; DIRECT is a walk-in sale from stock,
   // counted in the cycle of the first lot it consumed.
-  kind       String      @default("ENCARGO")
-  payments   Payment[]
-  deliveries Delivery[]
-  id         String      @id @default(uuid()) @db.Uuid
-  roundId    String      @db.Uuid
-  round      Round       @relation(fields: [roundId], references: [id])
-  customerId String      @db.Uuid
-  customer   Customer    @relation(fields: [customerId], references: [id])
-  notes      String?
-  version    Int         @default(1)
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  items      OrderItem[]
+  kind        String      @default("ENCARGO")
+  payments    Payment[]
+  deliveries  Delivery[]
+  id          String      @id @default(uuid()) @db.Uuid
+  roundId     String      @db.Uuid
+  round       Round       @relation(fields: [roundId], references: [id])
+  customerId  String      @db.Uuid
+  customer    Customer    @relation(fields: [customerId], references: [id])
+  notes       String?
+  // PICKUP: the customer collects it. DELIVERY: we take it, charging
+  // shippingFee (0 when the delivery is free).
+  delivery    String      @default("PICKUP")
+  shippingFee Decimal     @default(0) @db.Decimal(12, 2)
+  version     Int         @default(1)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  items       OrderItem[]
 
   @@index([roundId])
   @@index([kind, createdAt])

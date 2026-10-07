@@ -58,7 +58,11 @@ export function serializeOrder(order: any) {
     paid: money(paid),
     balance: money(balance),
     credit: money(credit),
-    paymentStatus: paid.gte(total) ? "PAID" : paid.gt(0) ? "PARTIAL" : "UNPAID",
+    paymentStatus: paid.gte(total.add(shippingOf(order)))
+      ? "PAID"
+      : paid.gt(0)
+        ? "PARTIAL"
+        : "UNPAID",
     deliveryStatus: delivered.gte(quantity)
       ? "DELIVERED"
       : delivered.gt(0)
@@ -66,12 +70,9 @@ export function serializeOrder(order: any) {
         : "ORDERED",
     items,
     profitability: metrics([{ ...order, items }]),
-    total: money(
-      items.reduce(
-        (sum: Prisma.Decimal, item: any) => sum.add(item.lineTotal),
-        decimal(0),
-      ),
-    ),
+    shippingFee: money(shippingOf(order)),
+    productTotal: money(total),
+    total: money(total.add(shippingOf(order))),
   };
 }
 export function purchaseSummary(roundId: string, orders: any[]) {
@@ -119,11 +120,12 @@ export function purchaseSummary(roundId: string, orders: any[]) {
   };
 }
 
+export const shippingOf = (order: any) =>
+  order.delivery === "DELIVERY" ? decimal(order.shippingFee ?? 0) : decimal(0);
 export function orderBalance(order: any) {
-  const total = order.items.reduce(
-    (s: Prisma.Decimal, i: any) => s.add(saleTotal(i)),
-    decimal(0),
-  );
+  const total = order.items
+    .reduce((s: Prisma.Decimal, i: any) => s.add(saleTotal(i)), decimal(0))
+    .add(shippingOf(order));
   const paid = (order.payments || [])
     .filter((p: any) => !p.voidedAt)
     .reduce((s: Prisma.Decimal, p: any) => s.add(p.amount), decimal(0));
@@ -143,8 +145,12 @@ export function metrics(orders: any[]) {
     collected = decimal(0),
     outstanding = decimal(0),
     credit = decimal(0),
+    shipping = decimal(0),
+    deliveries = 0,
     missing = 0;
   for (const order of orders) {
+    shipping = shipping.add(shippingOf(order));
+    if (order.delivery === "DELIVERY") deliveries++;
     for (const item of order.items) {
       const line = saleTotal(item);
       sales = sales.add(line);
@@ -187,6 +193,9 @@ export function metrics(orders: any[]) {
     customerCount: new Set(orders.map((o) => o.customerId)).size,
     averageOrder: orders.length ? money(sales.div(orders.length)) : "0.00",
     missingCostLines: missing,
+    // Charged to customers on top of product sales.
+    shipping: money(shipping),
+    deliveries,
   };
 }
 export function debtors(orders: any[]) {

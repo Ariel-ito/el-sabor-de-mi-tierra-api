@@ -19,7 +19,13 @@ import { cycleCosts, Lot } from "./costing";
 import { applyClosing, closingState } from "./closing";
 import { CloseRoundDto, RoundDto, RoundPatchDto } from "./dto";
 import { allocateStock, inventory, stockLock } from "./inventory";
-import { decimal, orderInclude, purchaseSummary, statistics } from "./math";
+import {
+  decimal,
+  money,
+  orderInclude,
+  purchaseSummary,
+  statistics,
+} from "./math";
 import { purchaseInclude } from "./purchases";
 @ApiBearerAuth()
 @Controller()
@@ -100,7 +106,7 @@ export class RoundsController {
     );
   }
   @Get("statistics") async stats() {
-    const [rounds, orders, receipts] = await this.db.$transaction([
+    const [rounds, orders, receipts, expenses] = await this.db.$transaction([
       this.db.round.findMany({ orderBy: { opensAt: "desc" } }),
       this.db.order.findMany({
         include: {
@@ -121,6 +127,15 @@ export class RoundsController {
           withdrawals: true,
         },
       }),
+      this.db.financeMovement.findMany({
+        where: {
+          roundId: { not: null },
+          kind: "EXPENSE",
+          status: "PAID",
+          category: { inResult: true },
+        },
+        include: { category: true },
+      }),
     ]);
     const lots: Lot[] = receipts.map((r) => ({
       productId: r.purchaseItem.productId,
@@ -136,14 +151,31 @@ export class RoundsController {
     const result = statistics(rounds, orders);
     return {
       ...result,
-      cycles: result.cycles.map((c) => ({
-        ...c,
-        ...cycleCosts(
+      cycles: result.cycles.map((c) => {
+        const costs = cycleCosts(
           c.id,
           orders.filter((o) => o.roundId === c.id),
           lots,
-        ),
-      })),
+        );
+        const own = expenses.filter((e) => e.roundId === c.id);
+        const spent = own.reduce((a, e) => a.add(e.amount), decimal(0));
+        const fuel = own
+          .filter((e) => e.category.systemKey === "TRANSPORT")
+          .reduce((a, e) => a.add(e.amount), decimal(0));
+        return {
+          ...c,
+          ...costs,
+          // Product margin, plus shipping charged, minus the cycle's own
+          // operating expenses from Contabilidad.
+          productResult: costs.result,
+          expenses: money(spent),
+          fuel: money(fuel),
+          result:
+            costs.result === null
+              ? null
+              : money(decimal(costs.result).add(c.shipping).sub(spent)),
+        };
+      }),
     };
   }
   @Get("rounds/:id/purchase-summary") async summary(

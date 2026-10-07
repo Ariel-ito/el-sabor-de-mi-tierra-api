@@ -623,7 +623,11 @@ export class FinanceController {
     });
     if (!category || !category.active || category.kind !== "EXPENSE")
       throw new BadRequestException("Elige una categoría de gasto activa.");
-    if (category.systemKey)
+    if (
+      ["PRODUCT_PURCHASE", "PROFIT_DISTRIBUTION"].includes(
+        category.systemKey ?? "",
+      )
+    )
       throw new BadRequestException(
         "Esa categoría no admite gastos recurrentes.",
       );
