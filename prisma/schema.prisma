@@ -33,6 +33,10 @@ model Customer {
   phoneCountryCode String           @default("+504")
   phone            String?
   notes            String?
+  // Delivery spot, for the route; address holds directions people use.
+  latitude         Float?
+  longitude        Float?
+  address          String?
   createdAt        DateTime         @default(now())
   orders           Order[]
   account          CustomerCredit[]

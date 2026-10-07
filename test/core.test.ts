@@ -5,6 +5,7 @@ import { plainToInstance } from "class-transformer";
 import { validate } from "class-validator";
 import { ItemDto, ProductPatchDto } from "../src/dto";
 import { expiry } from "../src/inventory";
+import { coordinatesIn, isMapsHost } from "../src/geo";
 import {
   decimal,
   lineTotal,
@@ -93,4 +94,21 @@ test("expiry counts Honduras calendar days and warns inside the window", () => {
       [-1, "EXPIRED"],
     ],
   );
+});
+test("map links and pasted coordinates give a spot", () => {
+  const spot = { latitude: 14.0723, longitude: -87.1921 };
+  for (const text of [
+    "https://maps.google.com/?q=14.0723,-87.1921",
+    "https://www.google.com/maps/place/Tegucigalpa/@14.0723,-87.1921,15z/data=!4m6",
+    "https://www.google.com/maps/place/X/data=!3d14.0723!4d-87.1921",
+    "https://www.google.com/maps/search/14.0723,-87.1921?entry=tts",
+    "https://www.google.com/maps/dir/?api=1&destination=14.0723%2C-87.1921",
+    " 14.0723, -87.1921 ",
+  ])
+    assert.deepEqual(coordinatesIn(text), spot, text);
+  assert.equal(coordinatesIn("https://maps.app.goo.gl/abc123"), null);
+  assert.equal(coordinatesIn("95.1, 10.2"), null);
+  assert.ok(isMapsHost(new URL("https://maps.app.goo.gl/abc")));
+  assert.ok(!isMapsHost(new URL("https://evil.example/maps")));
+  assert.ok(!isMapsHost(new URL("http://maps.app.goo.gl/abc")));
 });

@@ -9,6 +9,7 @@ import {
   IsEmail,
   IsIn,
   IsInt,
+  IsNumber,
   IsString,
   IsUUID,
   Matches,
@@ -491,4 +492,18 @@ export class LotExpiryDto {
 export class SettingTextDto {
   @IsInt() @Min(1) version!: number;
   @IsString() @MinLength(1) @MaxLength(2000) @Matches(/\S/) value!: string;
+}
+export class CustomerLocationDto {
+  // Both null clear the spot.
+  @ValidateIf((_o, v) => v !== null) @IsNumber() @Min(-90) @Max(90) latitude!:
+    number | null;
+  @ValidateIf((_o, v) => v !== null)
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  longitude!: number | null;
+  @ValidateIf(OPTIONAL) @IsString() @MaxLength(500) address?: string | null;
+}
+export class MapLinkDto {
+  @IsString() @MaxLength(2000) url!: string;
 }
