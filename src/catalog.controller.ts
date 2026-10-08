@@ -59,16 +59,26 @@ export class CatalogController {
     return this.db.supplier.create({ data: body });
   }
   private product(p: any) {
+    const { components, ...rest } = p;
     return {
-      ...p,
+      ...rest,
       salePrice: money(p.salePrice),
       estimatedCost: money(p.estimatedCost),
+      components: (components ?? []).map((c: any) => ({
+        componentId: c.componentId,
+        name: c.component.name,
+        unit: c.component.unit,
+        quantity: c.quantity.toString(),
+      })),
     };
   }
   @Get("products") async products() {
     return (
       await this.db.product.findMany({
-        include: { defaultSupplier: true },
+        include: {
+          defaultSupplier: true,
+          components: { include: { component: true } },
+        },
         orderBy: { name: "asc" },
       })
     ).map((p) => this.product(p));

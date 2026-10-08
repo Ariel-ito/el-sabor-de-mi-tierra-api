@@ -220,9 +220,34 @@ export class RoundsController {
               : [];
           }),
         }));
+        // A combo nobody has assembled yet is bought as its components.
+        const recipes = await tx.productComponent.findMany({
+          include: { component: { include: { defaultSupplier: true } } },
+        });
+        for (const o of orders)
+          o.items = o.items.flatMap((i: any) => {
+            const parts = recipes.filter((r) => r.comboId === i.productId);
+            if (!parts.length || i.source === "STOCK") return [i];
+            const pending = decimal(i.quantity).sub(
+              i.allocations.reduce(
+                (a: Prisma.Decimal, x: any) => a.add(x.quantity),
+                decimal(0),
+              ),
+            );
+            if (pending.lte(0)) return [];
+            return parts.map((r) => ({
+              ...i,
+              productId: r.componentId,
+              product: r.component,
+              supplierId: r.component.defaultSupplierId,
+              supplier: r.component.defaultSupplier,
+              quantity: pending.mul(r.quantity),
+              allocations: [],
+            }));
+          });
         const result = purchaseSummary(id, orders);
         const purchases = await tx.purchase.findMany({
-          where: { roundId: id },
+          where: { roundId: id, kind: "PURCHASE" },
           include: purchaseInclude,
         });
         for (const group of result.groups)

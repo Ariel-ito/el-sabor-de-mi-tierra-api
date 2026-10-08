@@ -161,8 +161,9 @@ export class FinanceController {
         }),
         this.db.receipt.findMany({
           where: {
+            // Assembled combos reuse stock already paid for.
+            purchase: { kind: "PURCHASE", ...(roundId ? { roundId } : {}) },
             ...(date ? { receivedAt: date } : {}),
-            ...(roundId ? { purchase: { roundId } } : {}),
           },
           include: {
             purchase: { include: { supplier: true, round: true } },

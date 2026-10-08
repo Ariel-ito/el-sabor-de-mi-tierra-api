@@ -60,20 +60,22 @@ model Supplier {
 model Product {
   purchaseItems     PurchaseItem[]
   costEffectiveAt   DateTime?
-  id                String         @id @default(uuid()) @db.Uuid
+  id                String             @id @default(uuid()) @db.Uuid
   name              String
-  unit              String         @default("lb")
-  salePrice         Decimal        @db.Decimal(12, 2)
-  estimatedCost     Decimal        @db.Decimal(12, 2)
-  defaultSupplierId String         @db.Uuid
-  defaultSupplier   Supplier       @relation(fields: [defaultSupplierId], references: [id])
-  active            Boolean        @default(true)
+  unit              String             @default("lb")
+  salePrice         Decimal            @db.Decimal(12, 2)
+  estimatedCost     Decimal            @db.Decimal(12, 2)
+  defaultSupplierId String             @db.Uuid
+  defaultSupplier   Supplier           @relation(fields: [defaultSupplierId], references: [id])
+  active            Boolean            @default(true)
   // Approximate days a fresh lot lasts from receipt, and how many days
   // before expiry to warn. Null when it does not apply.
   shelfLifeDays     Int?
   warnDays          Int?
-  createdAt         DateTime       @default(now())
+  createdAt         DateTime           @default(now())
   items             OrderItem[]
+  components        ProductComponent[] @relation("ComboComponents")
+  usedIn            ProductComponent[] @relation("ComponentOf")
 }
 
 enum RoundStatus {
@@ -166,6 +168,8 @@ model Purchase {
   version    Int            @default(1)
   items      PurchaseItem[]
   receipts   Receipt[]
+  // PURCHASE from a supplier, or ASSEMBLY: combos built from stock.
+  kind       String         @default("PURCHASE")
 }
 
 model PurchaseItem {
@@ -235,6 +239,10 @@ model StockWithdrawal {
   reason        String
   notes         String?
   createdAt     DateTime    @default(now())
+  // The assembly (an ASSEMBLY purchase) that consumed this stock.
+  assemblyId    String?     @db.Uuid
+
+  @@index([assemblyId])
 }
 
 model Payment {
@@ -371,4 +379,16 @@ model Setting {
   value     String
   version   Int      @default(1)
   updatedAt DateTime @updatedAt
+}
+
+// A combo's recipe: how much of each product goes into one combo.
+model ProductComponent {
+  id          String  @id @default(uuid()) @db.Uuid
+  comboId     String  @db.Uuid
+  combo       Product @relation("ComboComponents", fields: [comboId], references: [id], onDelete: Cascade)
+  componentId String  @db.Uuid
+  component   Product @relation("ComponentOf", fields: [componentId], references: [id])
+  quantity    Decimal @db.Decimal(12, 3)
+
+  @@unique([comboId, componentId])
 }

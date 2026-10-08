@@ -49,6 +49,8 @@ export async function receive(
     where: { id: purchaseId },
     include: purchaseInclude,
   });
+  if (purchase.kind !== "PURCHASE")
+    throw new BadRequestException("Los combos armados no se reciben.");
   const existing = await tx.receipt.findUnique({ where: { id: body.id } });
   if (existing) {
     if (existing.purchaseId !== purchaseId)

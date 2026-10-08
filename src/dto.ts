@@ -530,3 +530,23 @@ export class CustomerLocationDto {
 export class MapLinkDto {
   @IsString() @MaxLength(2000) url!: string;
 }
+export class RecipeLineDto {
+  @IsUUID() componentId!: string;
+  @Matches(QUANTITY) quantity!: string;
+}
+export class RecipeDto {
+  // Empty: the product stops being a combo.
+  @IsArray()
+  @ArrayMaxSize(20)
+  @ValidateNested({ each: true })
+  @Type(() => RecipeLineDto)
+  components!: RecipeLineDto[];
+}
+export class AssemblyDto {
+  @IsUUID() id!: string;
+  @IsUUID() roundId!: string;
+  @IsUUID() comboId!: string;
+  @Matches(QUANTITY) quantity!: string;
+  @IsDateString({ strict: true }) date!: string;
+  @ValidateIf(OPTIONAL) @IsString() @MaxLength(500) notes?: string;
+}

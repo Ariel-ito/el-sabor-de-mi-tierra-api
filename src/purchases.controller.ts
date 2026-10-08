@@ -30,7 +30,8 @@ export class PurchasesController {
     @Query("roundId", new ParseUUIDPipe({ optional: true })) roundId?: string,
   ) {
     return this.db.purchase.findMany({
-      where: roundId ? { roundId } : {},
+      // Combos assembled from stock are not supplier purchases.
+      where: { kind: "PURCHASE", ...(roundId ? { roundId } : {}) },
       include: purchaseInclude,
       orderBy: { orderedAt: "desc" },
     });
@@ -95,7 +96,8 @@ export class PurchasesController {
   ) {
     return this.db.$transaction(async (tx) => {
       const current = await tx.purchase.findUnique({ where: { id } });
-      if (!current) throw new NotFoundException("Compra no encontrada");
+      if (!current || current.kind !== "PURCHASE")
+        throw new NotFoundException("Compra no encontrada");
       const round = await lockRound(tx, current.roundId);
       if (round.status !== "OPEN")
         throw new ConflictException(

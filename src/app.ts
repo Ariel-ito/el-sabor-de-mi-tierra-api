@@ -1,4 +1,5 @@
 import { Module } from "@nestjs/common";
+import { AssembliesController } from "./assemblies.controller";
 import { AccountsController } from "./accounts.controller";
 import { AuthController } from "./auth.controller";
 import { CatalogController } from "./catalog.controller";
@@ -26,6 +27,7 @@ import { SalesController } from "./sales.controller";
     AccountsController,
     SettingsController,
     GeoController,
+    AssembliesController,
   ],
   providers: [Db, AuthGuard],
 })
