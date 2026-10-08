@@ -115,6 +115,7 @@ function summarize(
   return {
     quantity: quantity.toString(),
     sales: money(sales),
+    cost: money(cost),
     unitPrice,
     unitCost,
     marginPerLb:
@@ -158,6 +159,7 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
         productId: item.productId,
         name: item.product.name,
         unit: item.product.unit ?? "lb",
+        category: item.product.category?.name ?? "Sin categoría",
         sales: zero(),
         quantity: zero(),
         cost: zero(),
@@ -203,6 +205,7 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
         productId: r.productId,
         name: r.name,
         unit: r.unit,
+        category: r.category,
         ...view(r),
       })),
   };

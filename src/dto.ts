@@ -94,6 +94,10 @@ export class ProductDto {
   @ApiProperty() @Matches(MONEY) estimatedCost!: string;
   @ApiProperty() @IsUUID() defaultSupplierId!: string;
   @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsUUID()
+  categoryId?: string | null;
+  @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
   @IsIn(UNIT_KEYS)
   unit?: string;
@@ -150,6 +154,10 @@ export class ProductPatchDto {
   @ValidateIf((_o, v) => v !== undefined)
   @IsIn(UNIT_KEYS)
   unit?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsUUID()
+  categoryId?: string | null;
 }
 export class RoundDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(150) name!: string;
@@ -549,4 +557,7 @@ export class AssemblyDto {
   @Matches(QUANTITY) quantity!: string;
   @IsDateString({ strict: true }) date!: string;
   @ValidateIf(OPTIONAL) @IsString() @MaxLength(500) notes?: string;
+}
+export class ProductCategoryDto {
+  @IsString() @MinLength(1) @MaxLength(60) @Matches(/\S/) name!: string;
 }

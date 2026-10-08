@@ -113,7 +113,7 @@ export class RoundsController {
           ...orderInclude,
           items: {
             include: {
-              product: true,
+              product: { include: { category: true } },
               supplier: true,
               allocations: { include: { receiptItem: true } },
             },
@@ -163,9 +163,31 @@ export class RoundsController {
         const fuel = own
           .filter((e) => e.category.systemKey === "TRANSPORT")
           .reduce((a, e) => a.add(e.amount), decimal(0));
+        // Sales, cost and profit per line of business.
+        const byCategory = new Map<
+          string,
+          { sales: Prisma.Decimal; cost: Prisma.Decimal }
+        >();
+        for (const p of costs.productCosts) {
+          const row = byCategory.get(p.category) ?? {
+            sales: decimal(0),
+            cost: decimal(0),
+          };
+          row.sales = row.sales.add(p.sales);
+          row.cost = row.cost.add(p.cost);
+          byCategory.set(p.category, row);
+        }
         return {
           ...c,
           ...costs,
+          categories: [...byCategory.entries()]
+            .map(([name, r]) => ({
+              name,
+              sales: money(r.sales),
+              cost: money(r.cost),
+              profit: money(r.sales.sub(r.cost)),
+            }))
+            .sort((a, b) => Number(b.sales) - Number(a.sales)),
           // Product margin, plus shipping charged, minus the cycle's own
           // operating expenses from Contabilidad.
           productResult: costs.result,

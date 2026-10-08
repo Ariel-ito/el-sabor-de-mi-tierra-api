@@ -1,4 +1,7 @@
 import {
+  Delete,
+  NotFoundException,
+  ConflictException,
   BadRequestException,
   Body,
   Controller,
@@ -13,7 +16,13 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db } from "./core";
-import { CustomerDto, ProductDto, ProductPatchDto, SupplierDto } from "./dto";
+import {
+  CustomerDto,
+  ProductCategoryDto,
+  ProductDto,
+  ProductPatchDto,
+  SupplierDto,
+} from "./dto";
 import { money } from "./math";
 @ApiBearerAuth()
 @Controller()
@@ -72,18 +81,118 @@ export class CatalogController {
       })),
     };
   }
+  @Get("product-categories") async categories() {
+    const rows = await this.db.productCategory.findMany({
+      include: { _count: { select: { products: true } } },
+      orderBy: { name: "asc" },
+    });
+    return rows.map(({ _count, ...c }) => ({
+      ...c,
+      productCount: _count.products,
+    }));
+  }
+  @Post("product-categories") async createCategory(
+    @Body() body: ProductCategoryDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      const name = body.name.trim();
+      if (
+        await tx.productCategory.findFirst({
+          where: { name: { equals: name, mode: "insensitive" } },
+        })
+      )
+        throw new ConflictException("Ya existe una categoría con ese nombre.");
+      const created = await tx.productCategory.create({ data: { name } });
+      await audit(
+        tx,
+        req.actor.id,
+        "ProductCategory",
+        created.id,
+        "CREATE",
+        null,
+        created,
+      );
+      return created;
+    });
+  }
+  @Patch("product-categories/:id") async renameCategory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: ProductCategoryDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      const before = await tx.productCategory.findUnique({ where: { id } });
+      if (!before) throw new NotFoundException("Categoría no encontrada.");
+      const name = body.name.trim();
+      if (
+        await tx.productCategory.findFirst({
+          where: {
+            id: { not: id },
+            name: { equals: name, mode: "insensitive" },
+          },
+        })
+      )
+        throw new ConflictException("Ya existe una categoría con ese nombre.");
+      const after = await tx.productCategory.update({
+        where: { id },
+        data: { name },
+      });
+      await audit(
+        tx,
+        req.actor.id,
+        "ProductCategory",
+        id,
+        "UPDATE",
+        before,
+        after,
+      );
+      return after;
+    });
+  }
+  // Only empty categories go away; move their products first.
+  @Delete("product-categories/:id") async deleteCategory(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      const before = await tx.productCategory.findUnique({
+        where: { id },
+        include: { _count: { select: { products: true } } },
+      });
+      if (!before) throw new NotFoundException("Categoría no encontrada.");
+      if (before._count.products)
+        throw new ConflictException(
+          "La categoría tiene productos; cámbialos de categoría antes de borrarla.",
+        );
+      await tx.productCategory.delete({ where: { id } });
+      await audit(tx, req.actor.id, "ProductCategory", id, "DELETE", before, {
+        deleted: true,
+      });
+      return { ok: true };
+    });
+  }
   @Get("products") async products() {
     return (
       await this.db.product.findMany({
         include: {
           defaultSupplier: true,
+          category: true,
           components: { include: { component: true } },
         },
         orderBy: { name: "asc" },
       })
     ).map((p) => this.product(p));
   }
+  private async checkCategory(categoryId?: string | null) {
+    if (
+      categoryId &&
+      !(await this.db.productCategory.findUnique({ where: { id: categoryId } }))
+    )
+      throw new BadRequestException("Categoría inexistente.");
+  }
   @Post("products") async createProduct(@Body() body: ProductDto) {
+    await this.checkCategory(body.categoryId);
     return this.product(
       await this.db.product.create({
         data: body,
@@ -96,6 +205,7 @@ export class CatalogController {
     @Body() body: ProductPatchDto,
     @Req() req: AuthRequest,
   ) {
+    await this.checkCategory(body.categoryId);
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Product" WHERE id=${id}::uuid FOR UPDATE`;
       const before = await tx.product.findUniqueOrThrow({ where: { id } });
