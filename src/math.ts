@@ -1,3 +1,4 @@
+import { BadRequestException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 export const decimal = (value: Prisma.Decimal.Value) =>
   new Prisma.Decimal(value);
@@ -287,5 +288,18 @@ export function statistics(rounds: any[], orders: any[]) {
       closesAt: r.closesAt,
       ...report(orders.filter((o) => o.roundId === r.id)),
     })),
+  };
+}
+
+// Pickup never carries a fee; a delivery may be free.
+export function shipping(body: { delivery?: string; shippingFee?: string }) {
+  const delivery = body.delivery ?? "PICKUP";
+  if (delivery === "PICKUP" && body.shippingFee && Number(body.shippingFee) > 0)
+    throw new BadRequestException(
+      "Si el cliente retira, no lleva costo de envío.",
+    );
+  return {
+    delivery,
+    shippingFee: delivery === "DELIVERY" ? (body.shippingFee ?? "0") : "0",
   };
 }

@@ -287,6 +287,13 @@ export class SalePaymentDto {
 }
 export class SaleDto {
   @IsUUID() id!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["PICKUP", "DELIVERY"])
+  delivery?: "PICKUP" | "DELIVERY";
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(MONEY)
+  shippingFee?: string;
+
   // Cycle whose free stock is sold; defaults to that of the oldest free lot.
   @ValidateIf((_o, v) => v !== undefined) @IsUUID() roundId?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsUUID() customerId?: string;
@@ -308,6 +315,13 @@ export class SaleDto {
 }
 export class SalePatchDto {
   @IsInt() @Min(1) version!: number;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["PICKUP", "DELIVERY"])
+  delivery?: "PICKUP" | "DELIVERY";
+  @ValidateIf((_o, v) => v !== undefined)
+  @Matches(MONEY)
+  shippingFee?: string;
+
   // Omitted means Cliente de paso.
   @ValidateIf((_o, v) => v !== undefined) @IsUUID() customerId?: string;
   @ValidateIf((_o, v) => v !== undefined)

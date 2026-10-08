@@ -28,7 +28,7 @@ import {
   inventory,
   stockLock,
 } from "./inventory";
-import { decimal, orderInclude, serializeOrder } from "./math";
+import { decimal, orderInclude, serializeOrder, shipping } from "./math";
 export const WALK_IN = "Cliente de paso";
 type Tx = Prisma.TransactionClient;
 async function walkInCustomer(tx: Tx, customerId?: string) {
@@ -172,6 +172,7 @@ export class SalesController {
             roundId,
             customerId: await walkInCustomer(tx, body.customerId),
             notes: body.notes,
+            ...shipping(body),
             items: { create: items },
           },
         });
@@ -249,6 +250,16 @@ export class SalesController {
           data: {
             customerId: await walkInCustomer(tx, body.customerId),
             notes: body.notes ?? null,
+            ...(body.delivery || body.shippingFee !== undefined
+              ? shipping({
+                  delivery: body.delivery ?? before.delivery,
+                  shippingFee:
+                    body.shippingFee ??
+                    ((body.delivery ?? before.delivery) === "PICKUP"
+                      ? "0"
+                      : before.shippingFee.toString()),
+                })
+              : {}),
             version: { increment: 1 },
             items: { create: items },
           },

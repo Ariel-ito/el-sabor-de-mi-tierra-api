@@ -339,5 +339,12 @@ check(call('POST',f"/orders/{oj['id']}/deliveries",{'id':uid(),'version':oj['ver
 check(call('PATCH',f"/products/{jar['id']}",{'unit':'bolsa'})[0]==400,'unit of a used product cannot change')
 cy=next(x for x in good('GET','/statistics')['cycles'] if x['id']==c6['id'])
 check(cy['quantityByUnit']=={'bote':'2'},'statistics count quantities per unit')
+# Envío en ventas sin encargo.
+sj=good('POST','/sales',{'id':uid(),'roundId':c6['id'],'soldAt':'2026-10-06T14:00:00Z','delivery':'DELIVERY','shippingFee':'25','items':[{'productId':jar['id'],'quantity':'1','unitPrice':'180'}],'payment':{'amount':'205','method':'CASH'}})
+check(sj['total']=='205.00' and sj['shippingFee']=='25.00' and sj['paymentStatus']=='PAID','walk-in sale can carry a shipping fee')
+check(call('POST','/sales',{'id':uid(),'roundId':c6['id'],'soldAt':'2026-10-06T14:00:00Z','delivery':'PICKUP','shippingFee':'25','items':[{'productId':jar['id'],'quantity':'1','unitPrice':'180'}]})[0]==400,'pickup sale cannot carry a fee')
+check(call('PATCH',f"/sales/{sj['id']}",{'version':sj['version'],'delivery':'PICKUP','items':[{'productId':jar['id'],'quantity':'1','unitPrice':'180'}]})[0]==400,'dropping the fee below what was paid is rejected')
+sj=good('PATCH',f"/sales/{sj['id']}",{'version':sj['version'],'delivery':'DELIVERY','shippingFee':'25','items':[{'productId':jar['id'],'quantity':'1','unitPrice':'180'}]})
+check(sj['total']=='205.00','editing a sale keeps its shipping')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))
