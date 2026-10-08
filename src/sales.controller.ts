@@ -54,8 +54,10 @@ async function stockItems(
     where: { id: { in: lines.map((i) => i.productId) } },
   });
   await allocateStock(tx);
+  // Any cycle's free stock received by then, oldest first; the sale itself
+  // counts in `roundId`.
   const lots = (await inventory(tx)).filter(
-    (l) => l.roundId === roundId && new Date(l.receivedAt) <= soldAt,
+    (l) => new Date(l.receivedAt) <= soldAt,
   );
   const items: Prisma.OrderItemCreateWithoutOrderInput[] = [];
   for (const line of lines) {
@@ -78,7 +80,7 @@ async function stockItems(
     }
     if (need.gt(0))
       throw new BadRequestException(
-        `${product.name}: solo hay ${qtyText(decimal(line.quantity).sub(need), product.unit)} libres en este ciclo.`,
+        `${product.name}: solo hay ${qtyText(decimal(line.quantity).sub(need), product.unit)} libres en inventario.`,
       );
     for (const [supplierId, quantity] of bySupplier)
       items.push({

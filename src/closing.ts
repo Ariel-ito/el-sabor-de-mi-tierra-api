@@ -116,6 +116,7 @@ export async function closingState(
       receiptItemId: l.id,
       productName: l.productName,
       unit: l.unit,
+      shelfLifeDays: l.shelfLifeDays,
       supplierName: l.supplierName,
       receivedAt: l.receivedAt,
       invoice: l.invoice,
