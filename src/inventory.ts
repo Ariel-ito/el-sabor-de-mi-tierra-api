@@ -56,6 +56,7 @@ export async function inventory(tx: Prisma.TransactionClient) {
       id: l.id,
       productId: l.purchaseItem.productId,
       productName: l.purchaseItem.product.name,
+      unit: l.purchaseItem.product.unit,
       supplierId: l.purchaseItem.purchase.supplierId,
       supplierName: l.purchaseItem.purchase.supplier.name,
       cycleName: l.purchaseItem.purchase.round.name,
@@ -132,7 +133,7 @@ export async function allocateStock(tx: Prisma.TransactionClient) {
     await fill(item, false);
     if (item.source === "STOCK" && need.get(item.id)!.gt(0))
       throw new ConflictException(
-        "No hay suficientes libras libres de este producto. Actualiza el inventario.",
+        "No hay suficiente producto libre. Actualiza el inventario.",
       );
   }
   for (const item of items)

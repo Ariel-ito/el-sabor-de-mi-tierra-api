@@ -8,11 +8,25 @@ export type Lot = {
   quantity: Prisma.Decimal.Value;
   unitCost: Prisma.Decimal.Value;
   free?: Prisma.Decimal.Value;
+  unit?: string;
   withdrawals?: { reason: string; quantity: Prisma.Decimal.Value }[];
 };
-// Pounds a cycle bought that left without being sold, valued at lot cost.
+// What a cycle bought that left without being sold, valued at lot cost.
+// `pounds` counts pound products only; `quantities` has every unit.
 export function absorbed(roundId: string, lots: Lot[]) {
-  const sum = () => ({ pounds: decimal(0), cost: decimal(0) });
+  const sum = () => ({
+    pounds: decimal(0),
+    cost: decimal(0),
+    quantities: {} as Record<string, D>,
+  });
+  const add = (
+    r: ReturnType<typeof sum>,
+    unit = "lb",
+    q: Prisma.Decimal.Value,
+  ) => {
+    if (unit === "lb") r.pounds = r.pounds.add(q);
+    r.quantities[unit] = (r.quantities[unit] ?? decimal(0)).add(q);
+  };
   const by: Record<string, ReturnType<typeof sum>> = {
     LOSS: sum(),
     SAMPLE: sum(),
@@ -24,17 +38,20 @@ export function absorbed(roundId: string, lots: Lot[]) {
     for (const w of lot.withdrawals || []) {
       const row = by[w.reason];
       if (!row) continue;
-      row.pounds = row.pounds.add(w.quantity);
+      add(row, lot.unit, w.quantity);
       row.cost = row.cost.add(decimal(w.quantity).mul(lot.unitCost));
     }
     if (lot.free !== undefined && decimal(lot.free).gt(0)) {
-      kept.pounds = kept.pounds.add(lot.free);
+      add(kept, lot.unit, lot.free);
       kept.cost = kept.cost.add(decimal(lot.free).mul(lot.unitCost));
     }
   }
   const view = (r: ReturnType<typeof sum>) => ({
     pounds: r.pounds.toString(),
     cost: money(r.cost),
+    quantities: Object.fromEntries(
+      Object.entries(r.quantities).map(([u, q]) => [u, q.toString()]),
+    ),
   });
   return {
     loss: view(by.LOSS),
@@ -123,13 +140,24 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
     cycle: zero(),
     estimate: zero(),
   };
+  // Per-pound figures only make sense over pound products.
+  const pounds = {
+    sales: zero(),
+    quantity: zero(),
+    cost: zero(),
+    lot: zero(),
+    cycle: zero(),
+    estimate: zero(),
+  };
   for (const order of orders)
     for (const item of order.items) {
       const c = lineCost(item, roundId, lots);
       const sales = decimal(saleTotal(item));
+      const isLb = (item.product.unit ?? "lb") === "lb";
       const row = rows.get(item.productId) || {
         productId: item.productId,
         name: item.product.name,
+        unit: item.product.unit ?? "lb",
         sales: zero(),
         quantity: zero(),
         cost: zero(),
@@ -137,7 +165,7 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
         cycle: zero(),
         estimate: zero(),
       };
-      for (const t of [row, total]) {
+      for (const t of isLb ? [row, total, pounds] : [row, total]) {
         t.sales = t.sales.add(sales);
         t.quantity = t.quantity.add(c.quantity);
         t.cost = t.cost.add(c.cost);
@@ -150,7 +178,16 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
   const view = (r: typeof total) =>
     summarize(r.sales, r.quantity, r.cost, r.lot, r.cycle, r.estimate);
   const lost = absorbed(roundId, lots);
-  const costing = view(total);
+  const all = view(total),
+    lb = view(pounds);
+  // Money and cost coverage over everything; per-pound prices over pounds.
+  const costing = {
+    ...all,
+    quantity: lb.quantity,
+    unitPrice: lb.unitPrice,
+    unitCost: lb.unitCost,
+    marginPerLb: lb.marginPerLb,
+  };
   return {
     absorbed: lost,
     // Agreed sales minus cost of what was sold and of what was lost or given.
@@ -162,6 +199,11 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
     costing,
     productCosts: [...rows.values()]
       .sort((a, b) => b.sales.comparedTo(a.sales))
-      .map((r) => ({ productId: r.productId, name: r.name, ...view(r) })),
+      .map((r) => ({
+        productId: r.productId,
+        name: r.name,
+        unit: r.unit,
+        ...view(r),
+      })),
   };
 }

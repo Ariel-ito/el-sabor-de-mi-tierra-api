@@ -1,3 +1,4 @@
+import { assertQuantity, qtyText } from "./units";
 import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
@@ -60,6 +61,7 @@ async function stockItems(
   for (const line of lines) {
     const product = products.find((p) => p.id === line.productId);
     if (!product) throw new BadRequestException("Producto inexistente.");
+    assertQuantity(product.unit, line.quantity, product.name);
     let need = decimal(line.quantity);
     const bySupplier = new Map<string, Prisma.Decimal>();
     for (const lot of lots) {
@@ -76,7 +78,7 @@ async function stockItems(
     }
     if (need.gt(0))
       throw new BadRequestException(
-        `${product.name}: solo hay ${decimal(line.quantity).sub(need)} lb libres en este ciclo.`,
+        `${product.name}: solo hay ${qtyText(decimal(line.quantity).sub(need), product.unit)} libres en este ciclo.`,
       );
     for (const [supplierId, quantity] of bySupplier)
       items.push({

@@ -1,3 +1,4 @@
+import { assertQuantity, qtyText } from "./units";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { randomUUID } from "node:crypto";
@@ -46,7 +47,13 @@ export async function closingState(
         const pending = pendingOf(i);
         return pending.gt(0) &&
           !(i.fulfillRoundId && i.fulfillRoundId !== roundId)
-          ? [{ name: i.product.name, pending: pending.toString() }]
+          ? [
+              {
+                name: i.product.name,
+                unit: i.product.unit,
+                pending: pending.toString(),
+              },
+            ]
           : [];
       });
       return items.length
@@ -68,7 +75,13 @@ export async function closingState(
               orderId: i.orderId,
               customerName: i.order.customer.name,
               fromRound: i.order.round.name,
-              items: [{ name: i.product.name, pending: pending.toString() }],
+              items: [
+                {
+                  name: i.product.name,
+                  unit: i.product.unit,
+                  pending: pending.toString(),
+                },
+              ],
             },
           ]
         : [];
@@ -93,6 +106,7 @@ export async function closingState(
       orderId: i.orderId,
       customerName: i.order.customer.name,
       name: i.product.name,
+      unit: i.product.unit,
       pending: pendingOf(i).toString(),
       toRound: i.fulfillRound!.name,
     }));
@@ -101,6 +115,7 @@ export async function closingState(
     .map((l) => ({
       receiptItemId: l.id,
       productName: l.productName,
+      unit: l.unit,
       supplierName: l.supplierName,
       receivedAt: l.receivedAt,
       invoice: l.invoice,
@@ -118,8 +133,12 @@ export async function applyClosing(
   const { pendingDeliveries, leftovers } = await closingState(tx, roundId);
   if (pendingDeliveries.length)
     throw new ConflictException(
-      `Hay ${pendingDeliveries.length === 1 ? "1 encargo" : `${pendingDeliveries.length} encargos`} con libras sin entregar. Entrégalos antes de cerrar el ciclo.`,
+      `Hay ${pendingDeliveries.length === 1 ? "1 encargo" : `${pendingDeliveries.length} encargos`} con producto sin entregar. Entrégalos antes de cerrar el ciclo.`,
     );
+  for (const d of decisions) {
+    const lot = leftovers.find((l) => l.receiptItemId === d.receiptItemId);
+    if (lot) assertQuantity(lot.unit, d.quantity, lot.productName);
+  }
   for (const d of decisions)
     if (!leftovers.some((l) => l.receiptItemId === d.receiptItemId))
       throw new BadRequestException(
@@ -131,7 +150,7 @@ export async function applyClosing(
       .reduce((s, d) => s.add(d.quantity), decimal(0));
     if (!decided.eq(lot.available))
       throw new BadRequestException(
-        `${lot.productName}: quedan ${lot.available} lb libres y decidiste ${decided} lb. Reparte todo el sobrante.`,
+        `${lot.productName}: quedan ${qtyText(lot.available, lot.unit)} libres y decidiste ${qtyText(decided, lot.unit)}. Reparte todo el sobrante.`,
       );
   }
   const withdrawals = decisions.filter(

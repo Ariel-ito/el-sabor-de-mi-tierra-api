@@ -1,3 +1,4 @@
+import { UNIT_KEYS } from "./units";
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
 import { Type } from "class-transformer";
 import {
@@ -93,6 +94,10 @@ export class ProductDto {
   @ApiProperty() @Matches(MONEY) estimatedCost!: string;
   @ApiProperty() @IsUUID() defaultSupplierId!: string;
   @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(UNIT_KEYS)
+  unit?: string;
+  @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined && v !== null)
   @IsInt()
   @Min(1)
@@ -141,6 +146,10 @@ export class ProductPatchDto {
   @Min(0)
   @Max(365)
   warnDays?: number | null;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(UNIT_KEYS)
+  unit?: string;
 }
 export class RoundDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(150) name!: string;

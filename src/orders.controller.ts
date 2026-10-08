@@ -1,3 +1,4 @@
+import { assertQuantity } from "./units";
 import { randomUUID } from "node:crypto";
 import {
   BadRequestException,
@@ -211,6 +212,10 @@ export class OrdersController {
     });
     if (products.length !== ids.length)
       throw new BadRequestException("Producto inexistente o inactivo");
+    for (const i of items) {
+      const p = products.find((x) => x.id === i.productId)!;
+      assertQuantity(p.unit, i.quantity, p.name);
+    }
     const used = new Set<string>();
     return items.map(({ id, ...item }) => {
       const old = id
@@ -492,6 +497,7 @@ export class OrdersController {
           const item = order.items.find((i) => i.id === input.orderItemId);
           if (!item)
             throw new BadRequestException("Producto ajeno al encargo.");
+          assertQuantity(item.product.unit, input.quantity, item.product.name);
           await consumeReserved(
             tx,
             item.id,

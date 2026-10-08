@@ -1,3 +1,4 @@
+import { checkQuantities } from "./units";
 import {
   BadRequestException,
   Body,
@@ -68,10 +69,12 @@ export class InventoryController {
       const lot = (await inventory(tx)).find(
         (l) => l.id === body.receiptItemId,
       );
+      if (lot)
+        await checkQuantities(tx, [
+          { productId: lot.productId, quantity: body.quantity },
+        ]);
       if (!lot || decimal(lot.available).lt(body.quantity))
-        throw new BadRequestException(
-          "La salida supera las libras libres del lote.",
-        );
+        throw new BadRequestException("La salida supera lo libre del lote.");
       const result = await tx.stockWithdrawal.create({ data: body });
       await audit(
         tx,

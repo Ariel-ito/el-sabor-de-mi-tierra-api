@@ -1,3 +1,4 @@
+import { checkQuantities, qtyText } from "./units";
 import {
   BadRequestException,
   Body,
@@ -62,6 +63,7 @@ export class PurchasesController {
         new Set(body.items.map((i) => i.productId)).size !== body.items.length
       )
         throw new BadRequestException("Producto repetido");
+      await checkQuantities(tx, body.items);
       const after = await tx.purchase.create({
         data: {
           id: body.id,
@@ -116,6 +118,7 @@ export class PurchasesController {
         new Set(body.items.map((i) => i.productId)).size !== body.items.length
       )
         throw new BadRequestException("Producto repetido");
+      await checkQuantities(tx, body.items);
       const received = (itemId: string) =>
         before.receipts
           .flatMap((r) => r.items)
@@ -127,8 +130,8 @@ export class PurchasesController {
         if (got.gt(next?.quantity ?? 0))
           throw new BadRequestException(
             next
-              ? `${old.product.name}: ya se recibieron ${got} lb; no puedes pedir menos.`
-              : `${old.product.name}: ya se recibieron ${got} lb; no puedes quitarlo.`,
+              ? `${old.product.name}: ya se recibieron ${qtyText(got, old.product.unit)}; no puedes pedir menos.`
+              : `${old.product.name}: ya se recibieron ${qtyText(got, old.product.unit)}; no puedes quitarlo.`,
           );
         if (!next) await tx.purchaseItem.delete({ where: { id: old.id } });
         else

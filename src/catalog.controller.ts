@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -88,6 +89,16 @@ export class CatalogController {
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Product" WHERE id=${id}::uuid FOR UPDATE`;
       const before = await tx.product.findUniqueOrThrow({ where: { id } });
+      // Quantities already recorded would change meaning.
+      if (
+        body.unit &&
+        body.unit !== before.unit &&
+        ((await tx.orderItem.count({ where: { productId: id } })) ||
+          (await tx.purchaseItem.count({ where: { productId: id } })))
+      )
+        throw new BadRequestException(
+          "Este producto ya tiene encargos o compras; su unidad no se cambia. Crea un producto nuevo con la otra unidad.",
+        );
       const after = await tx.product.update({
         where: { id },
         data: body,

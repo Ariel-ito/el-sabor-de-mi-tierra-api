@@ -1,3 +1,4 @@
+import { assertQuantity } from "./units";
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { decimal, money, lineTotal } from "./math";
@@ -75,6 +76,7 @@ export async function receive(
       .flatMap((r) => r.items)
       .filter((r) => r.purchaseItemId === line.id)
       .reduce((a, r) => a.add(r.quantity), decimal(0));
+    assertQuantity(line.product.unit, i.quantity, line.product.name);
     if (prior.add(i.quantity).gt(line.quantity))
       throw new BadRequestException("La cantidad recibida supera lo pendiente");
     if (decimal(i.unitDiscount).gt(i.unitCost))

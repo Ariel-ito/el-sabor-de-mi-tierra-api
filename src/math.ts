@@ -94,7 +94,7 @@ export function purchaseSummary(roundId: string, orders: any[]) {
         group.items.set(item.productId, {
           productId: item.productId,
           productName: item.product.name,
-          unit: "lb",
+          unit: item.product.unit ?? "lb",
           quantity: decimal(0),
           estimatedUnitCost: money(item.product.estimatedCost),
         });
@@ -154,6 +154,7 @@ export function metrics(orders: any[]) {
     credit = decimal(0),
     shipping = decimal(0),
     deliveries = 0,
+    byUnit: Record<string, Prisma.Decimal> = {},
     missing = 0;
   for (const order of orders) {
     shipping = shipping.add(shippingOf(order));
@@ -162,6 +163,8 @@ export function metrics(orders: any[]) {
       const line = saleTotal(item);
       sales = sales.add(line);
       quantity = quantity.add(item.quantity);
+      const unit = item.product?.unit ?? "lb";
+      byUnit[unit] = (byUnit[unit] ?? decimal(0)).add(item.quantity);
       if (item.estimatedUnitCost == null) missing++;
       else {
         costedSales = costedSales.add(line);
@@ -203,6 +206,10 @@ export function metrics(orders: any[]) {
     // Charged to customers on top of product sales.
     shipping: money(shipping),
     deliveries,
+    // Quantity summed per unit; `quantity` mixes units and is kept for pounds.
+    quantityByUnit: Object.fromEntries(
+      Object.entries(byUnit).map(([u, q]) => [u, q.toString()]),
+    ),
   };
 }
 export function debtors(orders: any[]) {
@@ -238,11 +245,14 @@ export function statistics(rounds: any[], orders: any[]) {
             name: kind === "product" ? item.product.name : order.customer.name,
             sales: decimal(0),
             quantity: decimal(0),
+            byUnit: {} as Record<string, Prisma.Decimal>,
             orders: new Set<string>(),
           });
         const row = rows.get(id);
+        const unit = item.product?.unit ?? "lb";
         row.sales = row.sales.add(saleTotal(item));
         row.quantity = row.quantity.add(item.quantity);
+        row.byUnit[unit] = (row.byUnit[unit] ?? decimal(0)).add(item.quantity);
         row.orders.add(order.id);
       }
     return [...rows.values()]
@@ -252,6 +262,11 @@ export function statistics(rounds: any[], orders: any[]) {
         name: r.name,
         sales: money(r.sales),
         quantity: r.quantity.toString(),
+        quantityByUnit: Object.fromEntries(
+          Object.entries(r.byUnit as Record<string, Prisma.Decimal>).map(
+            ([u, q]) => [u, q.toString()],
+          ),
+        ),
         orderCount: r.orders.size,
       }));
   }
