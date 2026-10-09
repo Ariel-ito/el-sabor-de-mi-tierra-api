@@ -32,6 +32,31 @@ const assemblyInclude = {
   },
   round: true,
 } as const;
+// A combo's estimated cost is what its recipe costs at the components'
+// estimated costs; kept in sync whenever the recipe or a component changes.
+export async function syncComboCosts(
+  tx: Prisma.TransactionClient,
+  comboIds: string[],
+) {
+  for (const comboId of comboIds) {
+    const parts = await tx.productComponent.findMany({
+      where: { comboId },
+      include: { component: true },
+    });
+    if (!parts.length) continue;
+    await tx.product.update({
+      where: { id: comboId },
+      data: {
+        estimatedCost: money(
+          parts.reduce(
+            (a, c) => a.add(decimal(c.component.estimatedCost).mul(c.quantity)),
+            decimal(0),
+          ),
+        ),
+      },
+    });
+  }
+}
 // Combos: a recipe per combo product, and assemblies that turn component
 // stock into combo stock. An assembly is stored as an ASSEMBLY purchase so the
 // combos become an ordinary lot (cost, expiry, sales, encargos); the stock it
@@ -83,6 +108,7 @@ export class AssembliesController {
             quantity: c.quantity,
           })),
         });
+      await syncComboCosts(tx, [id]);
       const after = await tx.productComponent.findMany({
         where: { comboId: id },
         include: { component: true },

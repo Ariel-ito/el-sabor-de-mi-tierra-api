@@ -366,6 +366,13 @@ check(recipe([{'componentId':rosq['id'],'quantity':'2.5'}])[0]==400,'recipe resp
 good('PATCH',f"/products/{combo['id']}/components",{'components':[{'componentId':rosq['id'],'quantity':'5'},{'componentId':ques['id'],'quantity':'5'}]})
 check(call('PATCH',f"/products/{rosq['id']}/components",{'components':[{'componentId':combo['id'],'quantity':'1'}]})[0]==400,'a component cannot become a combo')
 check(next(p for p in good('GET','/products') if p['id']==combo['id'])['components'][0]['quantity'] in ('5','5.000'),'products expose their recipe')
+costOf=lambda pid:next(p for p in good('GET','/products') if p['id']==pid)['estimatedCost']
+check(costOf(combo['id'])=='50.00','saving a recipe sets the combo cost from its components')
+good('PATCH',f"/products/{rosq['id']}",{'estimatedCost':'5'})
+check(costOf(combo['id'])=='55.00','a component cost change updates its combos')
+good('PATCH',f"/products/{combo['id']}",{'estimatedCost':'999'})
+check(costOf(combo['id'])=='55.00','a combo cost always comes from its recipe')
+good('PATCH',f"/products/{rosq['id']}",{'estimatedCost':'4'})
 cR=good('POST','/rounds',{'name':'Combos '+u,'opensAt':'2026-10-06T00:00:00Z','closesAt':'2026-10-12T00:00:00Z'})
 bc=good('POST','/purchases',{'id':uid(),'roundId':cR['id'],'supplierId':s['id'],'orderedAt':'2026-10-06T08:00:00Z','items':[{'productId':rosq['id'],'quantity':'12','quotedUnitCost':'4'},{'productId':ques['id'],'quantity':'10','quotedUnitCost':'6'}]})
 good('POST',f"/purchases/{bc['id']}/receipts",{'id':uid(),'version':bc['version'],'receivedAt':'2026-10-06T09:00:00Z','invoice':'PAN '+u,'globalDiscount':'0','items':[{'purchaseItemId':i['id'],'quantity':i['quantity'],'unitCost':i['quotedUnitCost'],'unitDiscount':'0'} for i in bc['items']]})

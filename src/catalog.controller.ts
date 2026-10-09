@@ -23,6 +23,7 @@ import {
   ProductPatchDto,
   SupplierDto,
 } from "./dto";
+import { syncComboCosts } from "./assemblies.controller";
 import { money } from "./math";
 @ApiBearerAuth()
 @Controller()
@@ -219,10 +220,24 @@ export class CatalogController {
         throw new BadRequestException(
           "Este producto ya tiene encargos o compras; su unidad no se cambia. Crea un producto nuevo con la otra unidad.",
         );
-      const after = await tx.product.update({
+      await tx.product.update({ where: { id }, data: body });
+      // A combo's cost comes from its recipe; a component's cost feeds the
+      // combos that use it.
+      await syncComboCosts(tx, [id]);
+      const usedIn = await tx.productComponent.findMany({
+        where: { componentId: id },
+      });
+      await syncComboCosts(
+        tx,
+        usedIn.map((c) => c.comboId),
+      );
+      const after = await tx.product.findUniqueOrThrow({
         where: { id },
-        data: body,
-        include: { defaultSupplier: true },
+        include: {
+          defaultSupplier: true,
+          category: true,
+          components: { include: { component: true } },
+        },
       });
       await audit(tx, req.actor.id, "Product", id, "UPDATE", before, after);
       return this.product(after);
