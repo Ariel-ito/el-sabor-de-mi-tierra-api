@@ -120,6 +120,55 @@ export class AccountsController {
       money(list.reduce((s, r) => s.add(r[k]), decimal(0)));
     return { customers: list, owed: sum("owed"), account: sum("account") };
   }
+  // Everything about one customer at a glance: what they buy, what they
+  // owe, money held for them and their latest encargos and sales.
+  @Get("customers/:id/summary") async summary(
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    const customer = await this.db.customer.findUnique({ where: { id } });
+    if (!customer) throw new NotFoundException("Cliente no encontrado.");
+    const orders = await this.db.order.findMany({
+      where: { customerId: id },
+      include: { ...orderInclude, round: true },
+      orderBy: { createdAt: "desc" },
+    });
+    const active = orders.filter((o) => !o.cancelledAt);
+    const views = active.map((o) => serializeOrder(o));
+    const sum = (k: "total" | "paid" | "balance") =>
+      money(views.reduce((s, o) => s.add(o[k]), decimal(0)));
+    return {
+      customer,
+      encargos: active.filter((o) => o.kind === "ENCARGO").length,
+      sales: active.filter((o) => o.kind === "DIRECT").length,
+      cancelled: orders.length - active.length,
+      bought: sum("total"),
+      paid: sum("paid"),
+      owed: sum("balance"),
+      account: money(await accountBalance(this.db, id)),
+      lastAt: active[0]?.createdAt ?? null,
+      orders: views.slice(0, 20).map((o: any) => ({
+        id: o.id,
+        kind: o.kind,
+        createdAt: o.createdAt,
+        round: { id: o.round.id, name: o.round.name },
+        total: o.total,
+        balance: o.balance,
+        paymentStatus: o.paymentStatus,
+        deliveryStatus: o.deliveryStatus,
+        delivery: o.delivery,
+        shippingFee: o.shippingFee,
+        items: o.items.map((i: any) => ({
+          productId: i.productId,
+          supplierId: i.supplierId,
+          name: i.product.name,
+          unit: i.product.unit,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          lineTotal: i.lineTotal,
+        })),
+      })),
+    };
+  }
   @Get("customers/:id/account") async account(
     @Param("id", ParseUUIDPipe) id: string,
   ) {
