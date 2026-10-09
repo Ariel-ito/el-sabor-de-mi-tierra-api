@@ -43,8 +43,20 @@ export class CatalogController {
       return after;
     });
   }
-  @Get("customers") customers() {
-    return this.db.customer.findMany({ orderBy: { name: "asc" } });
+  @Get("customers") async customers() {
+    const rows = await this.db.customer.findMany({
+      include: {
+        _count: {
+          select: { orders: { where: { cancelledAt: { not: null } } } },
+        },
+      },
+      orderBy: { name: "asc" },
+    });
+    // How many encargos each customer cancelled, to keep it in mind.
+    return rows.map(({ _count, ...c }) => ({
+      ...c,
+      cancelledOrders: _count.orders,
+    }));
   }
   @Post("customers") createCustomer(@Body() body: CustomerDto) {
     return this.db.customer.create({ data: body });

@@ -4,10 +4,12 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
   Get,
   Inject,
   NotFoundException,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -162,6 +164,39 @@ export class PurchasesController {
       });
       await audit(tx, req.actor.id, "Purchase", id, "UPDATE", before, after);
       return after;
+    });
+  }
+  // A purchase nothing has arrived for can be removed, e.g. to redo it as
+  // one order.
+  @Delete("purchases/:id") deletePurchase(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("version", ParseIntPipe) version: number,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      const current = await tx.purchase.findUnique({ where: { id } });
+      if (!current || current.kind !== "PURCHASE")
+        throw new NotFoundException("Compra no encontrada");
+      await lockRound(tx, current.roundId);
+      await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id=${id}::uuid FOR UPDATE`;
+      const before = await tx.purchase.findUniqueOrThrow({
+        where: { id },
+        include: purchaseInclude,
+      });
+      if (before.version !== version)
+        throw new ConflictException(
+          "La compra cambió; actualiza antes de eliminarla.",
+        );
+      if (before.receipts.length)
+        throw new ConflictException(
+          "Esta compra ya tiene producto recibido; no se puede eliminar.",
+        );
+      await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
+      await tx.purchase.delete({ where: { id } });
+      await audit(tx, req.actor.id, "Purchase", id, "DELETE", before, {
+        deleted: true,
+      });
+      return { ok: true };
     });
   }
   @Post("purchases/:id/receipts") receipt(

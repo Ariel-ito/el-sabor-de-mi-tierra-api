@@ -66,11 +66,13 @@ export function serializeOrder(order: any) {
       : paid.gt(0)
         ? "PARTIAL"
         : "UNPAID",
-    deliveryStatus: delivered.gte(quantity)
-      ? "DELIVERED"
-      : delivered.gt(0)
-        ? "PARTIAL"
-        : "ORDERED",
+    deliveryStatus: order.cancelledAt
+      ? "CANCELLED"
+      : delivered.gte(quantity)
+        ? "DELIVERED"
+        : delivered.gt(0)
+          ? "PARTIAL"
+          : "ORDERED",
     items,
     profitability: metrics([{ ...order, items }]),
     shippingFee: money(shippingOf(order)),

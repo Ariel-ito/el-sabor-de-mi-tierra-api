@@ -5,10 +5,12 @@ import {
   Body,
   ConflictException,
   Controller,
+  Delete,
   Get,
   Inject,
   NotFoundException,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -22,6 +24,7 @@ import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import {
   CarryDto,
   DeliveryDto,
+  OrderCancelDto,
   OrderDto,
   OrderPatchDto,
   PaymentDto,
@@ -33,7 +36,13 @@ import {
   releaseForEdit,
   stockLock,
 } from "./inventory";
-import { decimal, orderInclude, serializeOrder, shipping } from "./math";
+import {
+  decimal,
+  orderBalance,
+  orderInclude,
+  serializeOrder,
+  shipping,
+} from "./math";
 @ApiBearerAuth()
 @Controller()
 @UseGuards(AuthGuard)
@@ -48,11 +57,153 @@ export class OrdersController {
         await allocateStock(tx);
         return (
           await tx.order.findMany({
-            where: { kind: "ENCARGO", ...(roundId ? { roundId } : {}) },
+            where: {
+              kind: "ENCARGO",
+              cancelledAt: null,
+              ...(roundId ? { roundId } : {}),
+            },
             include: orderInclude,
             orderBy: { createdAt: "desc" },
           })
         ).map(serializeOrder);
+      },
+      { timeout: 15000 },
+    );
+  }
+  @Get("orders/cancelled") async cancelled(
+    @Query("roundId", new ParseUUIDPipe({ optional: true })) roundId?: string,
+  ) {
+    return (
+      await this.db.order.findMany({
+        where: {
+          kind: "ENCARGO",
+          cancelledAt: { not: null },
+          ...(roundId ? { roundId } : {}),
+        },
+        include: orderInclude,
+        orderBy: { cancelledAt: "desc" },
+      })
+    ).map(serializeOrder);
+  }
+  // The customer no longer wants it: the encargo stays on record as
+  // cancelled, its lines go away and the stock they held is free to sell.
+  @Post("orders/:id/cancel") cancel(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: OrderCancelDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const before = await tx.order.findUnique({
+          where: { id },
+          include: orderInclude,
+        });
+        if (!before || before.kind !== "ENCARGO")
+          throw new NotFoundException("Encargo no encontrado.");
+        if (before.cancelledAt) return serializeOrder(before);
+        if (before.version !== body.version)
+          throw new ConflictException("El encargo cambió; actualiza antes.");
+        if (before.deliveries.length)
+          throw new ConflictException(
+            "Este encargo ya tiene entregas; edítalo para quitar lo que no se va a entregar.",
+          );
+        const view = serializeOrder(before);
+        await tx.orderItem.deleteMany({ where: { orderId: id } });
+        await tx.order.update({
+          where: { id },
+          data: {
+            cancelledAt: new Date(),
+            cancelReason: body.reason.trim(),
+            cancelledItems: {
+              items: view.items.map((i: any) => ({
+                productId: i.productId,
+                name: i.product.name,
+                unit: i.product.unit,
+                quantity: i.quantity,
+                unitPrice: i.unitPrice,
+                lineTotal: i.lineTotal,
+              })),
+              delivery: view.delivery,
+              shippingFee: view.shippingFee,
+              total: view.total,
+            },
+            delivery: "PICKUP",
+            shippingFee: 0,
+            version: { increment: 1 },
+          },
+        });
+        await allocateStock(tx);
+        if (body.toAccount) {
+          const { credit } = orderBalance(
+            await tx.order.findUniqueOrThrow({
+              where: { id },
+              include: orderInclude,
+            }),
+          );
+          if (credit.gt(0))
+            await tx.customerCredit.create({
+              data: {
+                id: randomUUID(),
+                customerId: before.customerId,
+                kind: "OVERPAY",
+                amount: credit,
+                date: new Date(),
+                orderId: id,
+                notes: "Pago de un encargo cancelado",
+              },
+            });
+        }
+        const after = serializeOrder(
+          await tx.order.findUniqueOrThrow({
+            where: { id },
+            include: orderInclude,
+          }),
+        );
+        await audit(tx, req.actor.id, "Order", id, "CANCEL", view, after);
+        return after;
+      },
+      { timeout: 15000 },
+    );
+  }
+  // An encargo saved by mistake: removed entirely while nothing was
+  // delivered or paid.
+  @Delete("orders/:id") remove(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Query("version", ParseIntPipe) version: number,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const before = await tx.order.findUnique({
+          where: { id },
+          include: orderInclude,
+        });
+        if (!before || before.kind !== "ENCARGO")
+          throw new NotFoundException("Encargo no encontrado.");
+        if (before.version !== version)
+          throw new ConflictException("El encargo cambió; actualiza antes.");
+        if (before.deliveries.length)
+          throw new ConflictException(
+            "Este encargo ya tiene entregas; no se puede eliminar.",
+          );
+        if (before.payments.some((p) => !p.voidedAt))
+          throw new ConflictException(
+            "Este encargo tiene abonos. Anúlalos primero, o cancélalo para dejar el pago como saldo a favor.",
+          );
+        if (await tx.customerCredit.count({ where: { orderId: id } }))
+          throw new ConflictException(
+            "Este encargo movió saldo de la cuenta del cliente; anula esos movimientos primero.",
+          );
+        await tx.orderItem.deleteMany({ where: { orderId: id } });
+        await tx.payment.deleteMany({ where: { orderId: id } });
+        await tx.order.delete({ where: { id } });
+        await allocateStock(tx);
+        await audit(tx, req.actor.id, "Order", id, "DELETE", before, {
+          deleted: true,
+        });
+        return { ok: true };
       },
       { timeout: 15000 },
     );
@@ -251,6 +402,8 @@ export class OrdersController {
         throw new BadRequestException(
           "Las ventas sin encargo no se editan; registra una venta nueva.",
         );
+      if (current.cancelledAt)
+        throw new ConflictException("Este encargo está cancelado.");
       const round = await lockRound(tx, current.roundId);
       if (round.status !== "OPEN")
         throw new ConflictException("El ciclo está cerrado");
@@ -328,6 +481,8 @@ export class OrdersController {
         where: { id },
         include: orderInclude,
       });
+      if (order.cancelledAt)
+        throw new ConflictException("Este encargo está cancelado.");
       const prior = await tx.payment.findUnique({ where: { id: body.id } });
       if (prior) {
         if (prior.orderId !== id)

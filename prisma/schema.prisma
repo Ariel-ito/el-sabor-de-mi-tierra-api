@@ -122,6 +122,11 @@ model Order {
   updatedAt      DateTime         @updatedAt
   items          OrderItem[]
   accountEntries CustomerCredit[]
+  // A cancelled encargo keeps who cancelled it and what it had; its lines
+  // are removed so its stock is free again.
+  cancelledAt    DateTime?
+  cancelReason   String?
+  cancelledItems Json?
 
   @@index([roundId])
   @@index([kind, createdAt])

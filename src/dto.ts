@@ -395,6 +395,14 @@ export class PaymentDto {
   @MaxLength(2000)
   notes?: string;
 }
+export class OrderCancelDto {
+  @IsInt() version!: number;
+  @IsString() @Matches(/\S/) @MaxLength(500) reason!: string;
+  // Keep what the customer paid as account credit.
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsBoolean()
+  toAccount?: boolean;
+}
 export class VoidPaymentDto {
   @IsString() @Matches(/\S/) @MaxLength(500) reason!: string;
 }
