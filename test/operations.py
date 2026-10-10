@@ -453,5 +453,14 @@ check(call('DELETE',f"/purchases/{bz['id']}?version={bzv}")[0]==409,'a received 
 check(call('DELETE',f"/purchases/{pd['id']}?version={pd['version']+1}")[0]==409,'purchase delete checks the version')
 good('DELETE',f"/purchases/{pd['id']}?version={pd['version']}")
 check(pd['id'] not in [x['id'] for x in good('GET',f"/purchases?roundId={cX['id']}")],'a purchase with nothing received can be deleted')
+# Eliminar productos: solo sin historial.
+pdel=good('POST','/products',{'name':'Producto por error '+u,'unit':'unidad','salePrice':'5','estimatedCost':'2','defaultSupplierId':s['id']})
+inuse=lambda pid:next(p for p in good('GET','/products') if p['id']==pid)['inUse']
+check(inuse(pdel['id']) is False and inuse(pz['id']) is True,'products say whether they have history')
+check(call('DELETE',f"/products/{pz['id']}")[0]==409,'a product with purchases or encargos cannot be deleted')
+check(call('DELETE',f"/products/{ques['id']}")[0]==409,'a product inside a combo cannot be deleted')
+good('DELETE',f"/products/{pdel['id']}")
+check(pdel['id'] not in [p['id'] for p in good('GET','/products')],'a product without history can be deleted')
+check(call('DELETE',f"/products/{pdel['id']}")[0]==404,'deleting twice is 404')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

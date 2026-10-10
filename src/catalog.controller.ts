@@ -192,10 +192,51 @@ export class CatalogController {
           defaultSupplier: true,
           category: true,
           components: { include: { component: true } },
+          _count: {
+            select: { items: true, purchaseItems: true, usedIn: true },
+          },
         },
         orderBy: { name: "asc" },
       })
-    ).map((p) => this.product(p));
+    ).map(({ _count, ...p }) => ({
+      ...this.product(p),
+      // With encargos, sales, purchases or as part of a combo it has history
+      // and can only be made inactive.
+      inUse: !!(_count.items || _count.purchaseItems || _count.usedIn),
+    }));
+  }
+  // Only a product with no history at all: one created by mistake.
+  @Delete("products/:id") deleteProduct(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Product" WHERE id=${id}::uuid FOR UPDATE`;
+      const before = await tx.product.findUnique({
+        where: { id },
+        include: {
+          components: true,
+          _count: {
+            select: { items: true, purchaseItems: true, usedIn: true },
+          },
+        },
+      });
+      if (!before) throw new NotFoundException("Producto no encontrado.");
+      if (before._count.usedIn)
+        throw new ConflictException(
+          "Este producto es parte de un combo. Quítalo de la receta del combo primero, o márcalo como Inactivo.",
+        );
+      if (before._count.items || before._count.purchaseItems)
+        throw new ConflictException(
+          "Este producto ya tiene encargos, ventas o compras y se conserva para el historial. Márcalo como Inactivo para que deje de aparecer.",
+        );
+      await tx.productComponent.deleteMany({ where: { comboId: id } });
+      await tx.product.delete({ where: { id } });
+      await audit(tx, req.actor.id, "Product", id, "DELETE", before, {
+        deleted: true,
+      });
+      return { ok: true };
+    });
   }
   private async checkCategory(categoryId?: string | null) {
     if (
