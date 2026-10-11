@@ -569,3 +569,16 @@ export class AssemblyDto {
 export class ProductCategoryDto {
   @IsString() @MinLength(1) @MaxLength(60) @Matches(/\S/) name!: string;
 }
+export class DateChangeDto {
+  @IsIn(["order", "delivery", "payment", "receipt"])
+  kind!: "order" | "delivery" | "payment" | "receipt";
+  @IsUUID() id!: string;
+  @IsDateString({ strict: true }) date!: string;
+}
+export class DateFixDto {
+  @IsArray()
+  @ArrayMaxSize(500)
+  @ValidateNested({ each: true })
+  @Type(() => DateChangeDto)
+  changes!: DateChangeDto[];
+}

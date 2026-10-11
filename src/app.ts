@@ -3,6 +3,7 @@ import { AssembliesController } from "./assemblies.controller";
 import { AccountsController } from "./accounts.controller";
 import { AuthController } from "./auth.controller";
 import { CatalogController } from "./catalog.controller";
+import { DatesController } from "./dates.controller";
 import { AuthGuard, Db } from "./core";
 import { FinanceController } from "./finance.controller";
 import { GeoController } from "./geo.controller";
@@ -19,6 +20,7 @@ import { SalesController } from "./sales.controller";
     AuthController,
     CatalogController,
     RoundsController,
+    DatesController,
     OrdersController,
     InventoryController,
     PurchasesController,
