@@ -403,6 +403,9 @@ export class OrderCancelDto {
   @IsBoolean()
   toAccount?: boolean;
 }
+export class NoticeDto {
+  @IsUUID() customerId!: string;
+}
 export class VoidPaymentDto {
   @IsString() @Matches(/\S/) @MaxLength(500) reason!: string;
 }

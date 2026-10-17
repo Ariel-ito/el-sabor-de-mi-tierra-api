@@ -9,6 +9,7 @@ import { FinanceController } from "./finance.controller";
 import { GeoController } from "./geo.controller";
 import { HealthController } from "./health.controller";
 import { InventoryController } from "./inventory.controller";
+import { NoticesController } from "./notices.controller";
 import { OrdersController } from "./orders.controller";
 import { PurchasesController } from "./purchases.controller";
 import { RoundsController } from "./rounds.controller";
@@ -21,6 +22,7 @@ import { SalesController } from "./sales.controller";
     CatalogController,
     RoundsController,
     DatesController,
+    NoticesController,
     OrdersController,
     InventoryController,
     PurchasesController,

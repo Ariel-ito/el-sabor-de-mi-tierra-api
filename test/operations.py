@@ -480,5 +480,22 @@ check(fix([{'kind':'order','id':oz['id'],'date':'2026-09-20T09:00:00Z'}])[0]==40
 one=good('GET',f"/orders/{o['id']}")
 check(one['id']==o['id'] and one['round']['id']==r['id'] and 'balance' in one,'one encargo can be read by id with its cycle')
 check(call('GET',f"/orders/{uid()}")[0]==404 and call('GET',f"/orders/carried?roundId={r['id']}")[0]==200 and call('GET','/orders/cancelled')[0]==200,'unknown encargo is 404 and fixed paths still work')
+# Clientes por avisar.
+rN=good('POST','/rounds',{'name':'Avisos '+u,'opensAt':'2026-10-10T00:00:00Z','closesAt':'2026-10-20T00:00:00Z'})
+cN=good('POST','/customers',{'name':'Nunca compra '+u}); cO=good('POST','/customers',{'name':'Ya encargó '+u})
+good('POST','/orders',{'roundId':rN['id'],'customerId':cO['id'],'items':[line]})
+nl=lambda:good('GET',f"/rounds/{rN['id']}/notices")
+row=lambda l,cid:next((x for x in l['customers'] if x['customer']['id']==cid),None)
+l=nl(); ids=[x['customer']['id'] for x in l['customers']]
+check(row(l,cO['id']) is None and not any(x['customer']['name']=='Cliente de paso' for x in l['customers']),'customers with an encargo this cycle and walk-ins are not listed')
+lc=row(l,c['id'])['last']
+check(row(l,c['id'])['purchases']>=5 and lc['round'] and lc['products'] and row(l,cN['id'])['purchases']==0 and row(l,cN['id'])['last'] is None and ids.index(c['id'])<ids.index(cN['id']),'recent buyers come first with their last encargo; never-buyers last')
+good('POST',f"/rounds/{rN['id']}/notices",{'customerId':c['id']}); good('POST',f"/rounds/{rN['id']}/notices",{'customerId':c['id']})
+good('POST',f"/rounds/{rN['id']}/notices",{'customerId':cO['id']})
+l=nl()
+check(row(l,c['id'])['notified']['by'] and l['notified']==2 and l['notifiedOrdered']==1,'a notice records who told them, once per customer and cycle')
+good('DELETE',f"/rounds/{rN['id']}/notices/{c['id']}")
+check(row(nl(),c['id'])['notified'] is None,'a notice can be undone')
+check(call('GET',f"/rounds/{uid()}/notices")[0]==404 and call('POST',f"/rounds/{rN['id']}/notices",{'customerId':uid()})[0]==404 and call('POST',f"/rounds/{rN['id']}/notices",{'customerId':'x'})[0]==400,'notices reject unknown cycles and customers')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))
