@@ -234,6 +234,23 @@ export class OrdersController {
   }
   // Supply a line's pending pounds from another open cycle. The sale and its
   // payments stay in the encargo's own cycle.
+  // One encargo or sale, e.g. to collect it from Cobranza. Declared after the
+  // fixed paths so "carried" and "cancelled" are not taken as ids.
+  @Get("orders/:id") async order(@Param("id", ParseUUIDPipe) id: string) {
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        await allocateStock(tx);
+        const order = await tx.order.findUnique({
+          where: { id },
+          include: { ...orderInclude, round: true },
+        });
+        if (!order) throw new NotFoundException("Encargo no encontrado.");
+        return serializeOrder(order);
+      },
+      { timeout: 15000 },
+    );
+  }
   @Post("orders/:id/items/:itemId/carry") carry(
     @Param("id", ParseUUIDPipe) id: string,
     @Param("itemId", ParseUUIDPipe) itemId: string,
