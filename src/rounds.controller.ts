@@ -5,6 +5,7 @@ import {
   Controller,
   Get,
   Inject,
+  NotFoundException,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -199,6 +200,37 @@ export class RoundsController {
               : money(decimal(costs.result).add(c.shipping).sub(spent)),
         };
       }),
+    };
+  }
+  // Shipping charged in the cycle next to what fuel and transport cost
+  // (Contabilidad), for Reparto: does the shipping cover the trips?
+  @Get("rounds/:id/shipping") async shipping(
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    if (!(await this.db.round.findUnique({ where: { id } })))
+      throw new NotFoundException("Ciclo no encontrado.");
+    const [orders, fuel] = await Promise.all([
+      this.db.order.findMany({
+        where: { roundId: id, cancelledAt: null, delivery: "DELIVERY" },
+        select: { shippingFee: true },
+      }),
+      this.db.financeMovement.aggregate({
+        where: {
+          roundId: id,
+          kind: "EXPENSE",
+          status: "PAID",
+          category: { systemKey: "TRANSPORT" },
+        },
+        _sum: { amount: true },
+      }),
+    ]);
+    return {
+      shipping: money(
+        orders.reduce((a, o) => a.add(o.shippingFee), decimal(0)),
+      ),
+      deliveries: orders.length,
+      free: orders.filter((o) => o.shippingFee.isZero()).length,
+      fuel: money(fuel._sum.amount ?? decimal(0)),
     };
   }
   @Get("rounds/:id/purchase-summary") async summary(
