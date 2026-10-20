@@ -192,7 +192,22 @@ export class RoundsController {
           // Product margin, plus shipping charged, minus the cycle's own
           // operating expenses from Contabilidad.
           productResult: costs.result,
+          // Sales minus the cost of what was sold, before losses, shipping
+          // and expenses.
+          grossProfit:
+            costs.result === null
+              ? null
+              : money(decimal(costs.result).add(costs.absorbed.total)),
           expenses: money(spent),
+          expenseItems: own
+            .sort((a, b) => a.date.getTime() - b.date.getTime())
+            .map((e) => ({
+              id: e.id,
+              date: e.date,
+              description: e.description,
+              category: e.category.name,
+              amount: money(e.amount),
+            })),
           fuel: money(fuel),
           result:
             costs.result === null

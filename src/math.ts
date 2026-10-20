@@ -180,6 +180,7 @@ export function metrics(orders: any[]) {
     credit = credit.add(b.credit);
   }
   const profit = sales.sub(cost);
+  const live = orders.filter((o) => !o.cancelledAt);
   // With legacy lines lacking cost, report profit only over the costed share
   // and say how much of sales it covers; never treat missing cost as zero.
   const partial =
@@ -202,9 +203,10 @@ export function metrics(orders: any[]) {
     estimatedProfit: missing ? null : money(profit),
     margin: missing ? null : margin(profit, sales),
     quantity: quantity.toString(),
-    orderCount: orders.length,
-    customerCount: new Set(orders.map((o) => o.customerId)).size,
-    averageOrder: orders.length ? money(sales.div(orders.length)) : "0.00",
+    // Cancelled encargos keep their payments but are no longer orders.
+    orderCount: live.length,
+    customerCount: new Set(live.map((o) => o.customerId)).size,
+    averageOrder: live.length ? money(sales.div(live.length)) : "0.00",
     missingCostLines: missing,
     // Charged to customers on top of product sales.
     shipping: money(shipping),
