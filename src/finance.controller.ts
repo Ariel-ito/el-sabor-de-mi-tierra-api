@@ -741,6 +741,16 @@ export class FinanceController {
     return after;
   }
   // ---- Owners ----
+  // Every payment to the owners, newest first; a 50/50 split shares its
+  // groupId.
+  @Get("distributions") async distributions() {
+    const rows = await this.db.financeMovement.findMany({
+      where: { category: { systemKey: "PROFIT_DISTRIBUTION" } },
+      include: movementInclude,
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    });
+    return rows.map(fromMovement);
+  }
   @Post("distributions") async distribute(
     @Body() body: DistributionDto,
     @Req() req: AuthRequest,
@@ -846,21 +856,26 @@ export class FinanceController {
       monthly: summarize(inMonth.map(toEntry)),
       allTime,
       months,
-      owners: OWNERS.map((o) => ({
-        ...o,
-        contributed: allTime.contributed[o.key],
-        owed: allTime.owedToOwners[o.key],
-        distributed: money(
-          all
-            .filter(
-              (l) =>
-                l.category.systemKey === "PROFIT_DISTRIBUTION" &&
-                l.owner === o.key,
-            )
-            .reduce((a, l) => a.add(l.amount), decimal(0)),
-        ),
-        suggested: money(decimal(allTime.available).mul(o.share)),
-      })),
+      owners: OWNERS.map((o) => {
+        const distributed = all
+          .filter(
+            (l) =>
+              l.category.systemKey === "PROFIT_DISTRIBUTION" &&
+              l.owner === o.key,
+          )
+          .reduce((a, l) => a.add(l.amount), decimal(0));
+        return {
+          ...o,
+          contributed: allTime.contributed[o.key],
+          owed: allTime.owedToOwners[o.key],
+          distributed: money(distributed),
+          // Their share of all the profit minus what they already received;
+          // negative when they were paid ahead of the other owner.
+          suggested: money(
+            decimal(allTime.result).mul(o.share).sub(distributed),
+          ),
+        };
+      }),
       cycleExpenses: [...cycles.values()].map((c) => ({
         ...c,
         expenses: money(c.expenses),
