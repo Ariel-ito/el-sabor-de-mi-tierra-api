@@ -101,6 +101,15 @@ export class AccountsController {
         balance: view.balance,
         credit: view.credit,
         deliveryStatus: view.deliveryStatus,
+        // What it was, for the message that explains the balance.
+        delivery: view.delivery,
+        shippingFee: view.shippingFee,
+        items: view.items.map((i: any) => ({
+          name: i.product.name,
+          unit: i.product.unit,
+          quantity: i.quantity,
+          lineTotal: i.lineTotal,
+        })),
       });
     }
     for (const c of credits) {
