@@ -81,6 +81,9 @@ type Line = {
   round: { id: string; name: string } | null;
   recurringId: string | null;
   version: number | null;
+  // Cobros: their encargo or sale, to fix or void them from Contabilidad.
+  orderId?: string;
+  notes?: string | null;
 };
 const fromMovement = (m: MovementRow): Line => ({
   id: m.id,
@@ -226,6 +229,8 @@ export class FinanceController {
         category: sale,
         description: `${p.order.kind === "DIRECT" ? "Venta" : "Cobro"} · ${p.order.customer.name}`,
         method: p.method,
+        orderId: p.orderId,
+        notes: p.notes,
         round: { id: p.order.round.id, name: p.order.round.name },
       })),
       ...account.map((e): Line => ({

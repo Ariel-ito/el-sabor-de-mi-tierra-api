@@ -523,5 +523,15 @@ check(st['shipping']=='30.00' and st['grossProfit'] is not None and round(float(
 cl=next(x for x in good('GET','/collections')['customers'] if x['customer']['id']==cN['id'])
 od=next(o for o in cl['orders'] if o['delivery']=='DELIVERY' and o['shippingFee']=='30.00')
 check(od['items'][0]['name']==p['name'] and od['items'][0]['quantity']=='2.5' and od['items'][0]['lineTotal']=='112.50','collections list what each pending order had')
+# Corregir o anular un cobro desde Contabilidad.
+oe=good('POST','/orders',{'roundId':rS['id'],'customerId':cN['id'],'items':[line]})
+pe=uid();oe=good('POST',f"/orders/{oe['id']}/payments",{'id':pe,'version':oe['version'],'amount':'20','method':'CASH','paidAt':'2026-10-12T10:00:00Z'})
+led=lambda:[l for l in good('GET',f"/finance/ledger?roundId={rS['id']}")['lines'] if l['id']==pe]
+check(led()[0]['orderId']==oe['id'] and led()[0]['amount']=='20.00','ledger cobros say which encargo they belong to')
+check(call('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'200','method':'CASH','paidAt':'2026-10-12T10:00:00Z'})[0]==400 and call('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'30','method':'CASH','paidAt':'2099-01-01T00:00:00Z'})[0]==400,'a cobro cannot be edited above what is owed or into the future')
+oe=good('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'30','method':'TRANSFER','paidAt':'2026-10-13T09:00:00Z','notes':'Corregido'})
+check(oe['paid']=='30.00' and led()[0]['method']=='TRANSFER' and led()[0]['date'].startswith('2026-10-13') and led()[0]['notes']=='Corregido','a cobro can be corrected')
+good('POST',f"/orders/{oe['id']}/payments/{pe}/void",{'reason':'Registrado por error'})
+check(not led() and call('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'10','method':'CASH','paidAt':'2026-10-12T10:00:00Z'})[0]==409,'a voided cobro leaves Contabilidad and cannot be edited')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

@@ -29,6 +29,7 @@ import {
   OrderPatchDto,
   PaymentDto,
   VoidPaymentDto,
+  PaymentEditDto,
 } from "./dto";
 import {
   allocateStock,
@@ -38,6 +39,7 @@ import {
 } from "./inventory";
 import {
   decimal,
+  money,
   orderBalance,
   orderInclude,
   serializeOrder,
@@ -555,6 +557,80 @@ export class OrdersController {
         "CREATE",
         null,
         payment,
+      );
+      return serializeOrder(
+        await tx.order.findUniqueOrThrow({
+          where: { id },
+          include: orderInclude,
+        }),
+      );
+    });
+  }
+  // Fixes a cobro typed wrong (amount, method, date or note); the audit keeps
+  // what it was. One paid with account credit is voided and redone instead.
+  @Patch("orders/:id/payments/:paymentId") async editPayment(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Param("paymentId", ParseUUIDPipe) paymentId: string,
+    @Body() body: PaymentEditDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
+      const before = await tx.payment.findUnique({ where: { id: paymentId } });
+      if (!before || before.orderId !== id)
+        throw new NotFoundException("Pago no encontrado.");
+      if (before.voidedAt)
+        throw new ConflictException("Este pago ya fue anulado.");
+      if (before.method === "CREDIT")
+        throw new BadRequestException(
+          "Este pago se hizo con saldo a favor; anúlalo y regístralo de nuevo.",
+        );
+      if (
+        await tx.customerCredit.count({
+          where: { orderId: id, kind: "OVERPAY", voidedAt: null },
+        })
+      )
+        throw new BadRequestException(
+          "Parte de lo pagado se pasó a la cuenta del cliente; anula eso primero.",
+        );
+      if (new Date(body.paidAt) > new Date())
+        throw new BadRequestException("La fecha de pago no puede ser futura.");
+      const view = serializeOrder(
+        await tx.order.findUniqueOrThrow({
+          where: { id },
+          include: orderInclude,
+        }),
+      );
+      // At most what the order would owe without this payment.
+      const room = decimal(view.total).sub(
+        decimal(view.paid).sub(before.amount),
+      );
+      const amount = decimal(body.amount);
+      if (amount.lte(0) || amount.gt(room))
+        throw new BadRequestException(
+          `El pago debe ser mayor a cero y no superar L ${money(Prisma.Decimal.max(0, room))}.`,
+        );
+      const after = await tx.payment.update({
+        where: { id: paymentId },
+        data: {
+          amount,
+          method: body.method,
+          paidAt: new Date(body.paidAt),
+          notes: body.notes?.trim() || null,
+        },
+      });
+      await tx.order.update({
+        where: { id },
+        data: { version: { increment: 1 } },
+      });
+      await audit(
+        tx,
+        req.actor.id,
+        "Payment",
+        paymentId,
+        "UPDATE",
+        before,
+        after,
       );
       return serializeOrder(
         await tx.order.findUniqueOrThrow({

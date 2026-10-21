@@ -395,6 +395,16 @@ export class PaymentDto {
   @MaxLength(2000)
   notes?: string;
 }
+// Fixing a cobro typed wrong.
+export class PaymentEditDto {
+  @Matches(MONEY) amount!: string;
+  @IsIn(["CASH", "TRANSFER"]) method!: string;
+  @IsDateString({ strict: true }) paidAt!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+}
 export class OrderCancelDto {
   @IsInt() version!: number;
   @IsString() @Matches(/\S/) @MaxLength(500) reason!: string;
