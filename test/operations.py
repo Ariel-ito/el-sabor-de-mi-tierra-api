@@ -533,5 +533,15 @@ oe=good('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'30','method':'TRA
 check(oe['paid']=='30.00' and led()[0]['method']=='TRANSFER' and led()[0]['date'].startswith('2026-10-13') and led()[0]['notes']=='Corregido','a cobro can be corrected')
 good('POST',f"/orders/{oe['id']}/payments/{pe}/void",{'reason':'Registrado por error'})
 check(not led() and call('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'10','method':'CASH','paidAt':'2026-10-12T10:00:00Z'})[0]==409,'a voided cobro leaves Contabilidad and cannot be edited')
+# Cambiar contraseña: cierra las otras sesiones.
+pw=os.environ['DAIRY_TEST_PASSWORD'];email=os.environ['DAIRY_TEST_EMAIL'];new=pw+'-nueva'
+other=good('POST','/auth/login',{'email':email,'password':pw})['accessToken']
+check(call('POST','/auth/password',{'currentPassword':'mala-clave-123','newPassword':new})[0]==400 and call('POST','/auth/password',{'currentPassword':pw,'newPassword':'corta'})[0]==400,'a new password needs the current one and at least 10 characters')
+good('POST','/auth/password',{'currentPassword':pw,'newPassword':new})
+mine=token;token=other;gone=call('GET','/auth/me')[0]==401;token=mine
+check(gone and call('GET','/auth/me')[0]==200,'changing the password closes the other sessions only')
+token=None;old=call('POST','/auth/login',{'email':email,'password':pw})[0];token=good('POST','/auth/login',{'email':email,'password':new})['accessToken']
+good('POST','/auth/password',{'currentPassword':new,'newPassword':pw})
+check(old==401,'the old password stops working')
 good('POST','/auth/logout')
 print(json.dumps({'passed':len(checks),'checks':checks},ensure_ascii=False,indent=2))

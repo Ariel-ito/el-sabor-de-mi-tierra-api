@@ -25,6 +25,10 @@ export class LoginDto {
   @ApiProperty() @IsEmail() email!: string;
   @ApiProperty() @IsString() @MaxLength(256) password!: string;
 }
+export class PasswordDto {
+  @ApiProperty() @IsString() @MaxLength(256) currentPassword!: string;
+  @ApiProperty() @IsString() @MaxLength(256) newPassword!: string;
+}
 export class CustomerDto {
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)

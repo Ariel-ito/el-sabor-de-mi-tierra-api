@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
@@ -10,8 +11,8 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import type { Request } from "express";
-import { AuthGuard, AuthRequest, Db } from "./core";
-import { LoginDto } from "./dto";
+import { audit, AuthGuard, AuthRequest, Db } from "./core";
+import { LoginDto, PasswordDto } from "./dto";
 import { hashPassword, hashToken, newToken, verifyPassword } from "./security";
 @Controller("auth")
 export class AuthController {
@@ -55,6 +56,47 @@ export class AuthController {
   }
   @Get("me") @UseGuards(AuthGuard) me(@Req() req: AuthRequest) {
     return req.actor;
+  }
+  // A new password closes every other session of the same person.
+  @Post("password") @UseGuards(AuthGuard) async password(
+    @Body() input: PasswordDto,
+    @Req() req: AuthRequest,
+  ) {
+    const now = Date.now(),
+      key = `password:${req.actor.id}`;
+    const a = this.attempts.get(key);
+    if (a && a.until > now && a.count >= 10)
+      throw new HttpException("Demasiados intentos; espera 15 minutos", 429);
+    const user = await this.db.user.findUniqueOrThrow({
+      where: { id: req.actor.id },
+    });
+    if (!(await verifyPassword(input.currentPassword, user.passwordHash))) {
+      this.attempts.set(key, {
+        count: (a && a.until > now ? a.count : 0) + 1,
+        until: a && a.until > now ? a.until : now + 15 * 60 * 1000,
+      });
+      throw new BadRequestException("La contraseña actual no es correcta.");
+    }
+    if (input.newPassword.length < 10)
+      throw new BadRequestException(
+        "La nueva contraseña debe tener al menos 10 caracteres.",
+      );
+    if (input.newPassword === input.currentPassword)
+      throw new BadRequestException(
+        "La nueva contraseña debe ser distinta de la actual.",
+      );
+    const passwordHash = await hashPassword(input.newPassword);
+    await this.db.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { passwordHash } });
+      await tx.session.deleteMany({
+        where: { userId: user.id, tokenHash: { not: req.tokenHash } },
+      });
+      await audit(tx, user.id, "User", user.id, "PASSWORD", null, {
+        changed: true,
+      });
+    });
+    this.attempts.delete(key);
+    return { ok: true };
   }
   @Post("logout") @UseGuards(AuthGuard) async logout(@Req() req: AuthRequest) {
     await this.db.session.deleteMany({ where: { tokenHash: req.tokenHash } });
