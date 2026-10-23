@@ -30,6 +30,7 @@ import {
   PaymentDto,
   VoidPaymentDto,
   PaymentEditDto,
+  PackingDto,
 } from "./dto";
 import {
   allocateStock,
@@ -336,6 +337,7 @@ export class OrdersController {
           roundId: body.roundId,
           customerId: body.customerId,
           notes: body.notes,
+          partialOk: body.partialOk ?? false,
           ...shipping(body),
           items: { create: items },
         },
@@ -442,6 +444,7 @@ export class OrdersController {
         data: {
           customerId: body.customerId,
           notes: body.notes,
+          partialOk: body.partialOk,
           ...(body.delivery || body.shippingFee !== undefined
             ? shipping({
                 delivery: body.delivery ?? before.delivery,
@@ -479,6 +482,22 @@ export class OrdersController {
             await tx.orderItem.update({ where: { id: item.id }, data: item });
           else await tx.orderItem.create({ data: { ...item, orderId: id } });
         }
+        // Another product or quantity: the bag has to be checked again.
+        const repack =
+          items.some((i) => !i.id) ||
+          before.items.some((old) => {
+            const next = items.find((i) => i.id === old.id);
+            return (
+              !next ||
+              next.productId !== old.productId ||
+              !old.quantity.eq(next.quantity)
+            );
+          });
+        if (repack)
+          await tx.orderItem.updateMany({
+            where: { orderId: id },
+            data: { packedAt: null },
+          });
       }
       await allocateStock(tx);
       const after = await tx.order.findUniqueOrThrow({
@@ -640,6 +659,31 @@ export class OrdersController {
       );
     });
   }
+  // Lines put in (or taken out of) the customer's bag while packing. Shared by
+  // both phones; it leaves the version alone so open forms keep working.
+  @Post("orders/:id/packing") async pack(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: PackingDto,
+  ) {
+    const order = await this.db.order.findUnique({
+      where: { id },
+      include: { items: true },
+    });
+    if (!order || order.cancelledAt)
+      throw new NotFoundException("Encargo no encontrado.");
+    if (body.items.some((x) => !order.items.some((i) => i.id === x)))
+      throw new BadRequestException("Línea de pedido inválida.");
+    await this.db.orderItem.updateMany({
+      where: { id: { in: body.items } },
+      data: { packedAt: body.packed ? new Date() : null },
+    });
+    return serializeOrder(
+      await this.db.order.findUniqueOrThrow({
+        where: { id },
+        include: orderInclude,
+      }),
+    );
+  }
   @Post("orders/:id/payments/:paymentId/void") async voidPayment(
     @Param("id", ParseUUIDPipe) id: string,
     @Param("paymentId", ParseUUIDPipe) paymentId: string,
@@ -754,6 +798,24 @@ export class OrdersController {
           where: { id },
           data: { version: { increment: 1 } },
         });
+        // A line delivered only in part is packed again for the rest.
+        const left = serializeOrder(
+          await tx.order.findUniqueOrThrow({
+            where: { id },
+            include: orderInclude,
+          }),
+        )
+          .items.filter(
+            (i: any) =>
+              body.items.some((d) => d.orderItemId === i.id) &&
+              decimal(i.deliveredQuantity).lt(i.quantity),
+          )
+          .map((i: any) => i.id);
+        if (left.length)
+          await tx.orderItem.updateMany({
+            where: { id: { in: left } },
+            data: { packedAt: null },
+          });
         await audit(
           tx,
           req.actor.id,

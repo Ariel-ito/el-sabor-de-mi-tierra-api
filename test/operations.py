@@ -533,6 +533,28 @@ oe=good('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'30','method':'TRA
 check(oe['paid']=='30.00' and led()[0]['method']=='TRANSFER' and led()[0]['date'].startswith('2026-10-13') and led()[0]['notes']=='Corregido','a cobro can be corrected')
 good('POST',f"/orders/{oe['id']}/payments/{pe}/void",{'reason':'Registrado por error'})
 check(not led() and call('PATCH',f"/orders/{oe['id']}/payments/{pe}",{'amount':'10','method':'CASH','paidAt':'2026-10-12T10:00:00Z'})[0]==409,'a voided cobro leaves Contabilidad and cannot be edited')
+# Empaque y encargos por partes.
+sP=good('POST','/suppliers',{'name':'Prov empaque '+u,'region':'Olancho'})
+pP=good('POST','/products',{'name':'Queso empaque '+u,'salePrice':'60','estimatedCost':'40','defaultSupplierId':sP['id']})
+rP=good('POST','/rounds',{'name':'Empaque '+u,'opensAt':'2026-10-10T00:00:00Z','closesAt':'2026-10-20T00:00:00Z'})
+lp={'productId':pP['id'],'supplierId':sP['id'],'quantity':'3','unitPrice':'60'}
+op=good('POST','/orders',{'roundId':rP['id'],'customerId':cN['id'],'items':[lp],'partialOk':True})
+check(op['partialOk'] is True and op['items'][0]['packedAt'] is None and good('POST','/orders',{'roundId':rP['id'],'customerId':cO['id'],'items':[lp]})['partialOk'] is False,'an encargo can say it takes its products in parts')
+bp=good('POST','/purchases',{'id':uid(),'roundId':rP['id'],'supplierId':sP['id'],'orderedAt':'2026-10-11T10:00:00Z','items':[{'productId':pP['id'],'quantity':'6','quotedUnitCost':'40'}]})
+good('POST',f"/purchases/{bp['id']}/receipts",{'id':uid(),'version':bp['version'],'receivedAt':'2026-10-12T10:00:00Z','invoice':'EMP '+u,'globalDiscount':'0','items':[{'purchaseItemId':bp['items'][0]['id'],'quantity':'6','unitCost':'40','unitDiscount':'0'}]})
+ln=op['items'][0]['id'];v0=op['version']
+op=good('POST',f"/orders/{op['id']}/packing",{'items':[ln],'packed':True})
+check(op['items'][0]['packedAt'] is not None and op['version']==v0,'packing marks a line without touching the version')
+check(call('POST',f"/orders/{op['id']}/packing",{'items':[uid()],'packed':True})[0]==400,'packing only takes lines of that encargo')
+op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'notes':'Sin sal'})
+check(op['items'][0]['packedAt'] is not None,'a new note keeps the bag packed')
+op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'items':[{**lp,'id':ln,'quantity':'2'}]})
+check(op['items'][0]['packedAt'] is None,'changing a quantity unpacks the bag')
+op=good('POST',f"/orders/{op['id']}/packing",{'items':[ln],'packed':True})
+op=good('POST',f"/orders/{op['id']}/deliveries",{'id':uid(),'version':op['version'],'deliveredAt':'2026-10-13T10:00:00Z','items':[{'orderItemId':ln,'quantity':'1'}]})
+check(op['items'][0]['packedAt'] is None and op['items'][0]['deliveredQuantity']=='1','a line delivered in part is packed again for the rest')
+op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'partialOk':False})
+check(op['partialOk'] is False,'taking it in parts can be turned off')
 # Cambiar contraseña: cierra las otras sesiones.
 pw=os.environ['DAIRY_TEST_PASSWORD'];email=os.environ['DAIRY_TEST_EMAIL'];new=pw+'-nueva'
 other=good('POST','/auth/login',{'email':email,'password':pw})['accessToken']

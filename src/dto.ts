@@ -221,6 +221,10 @@ export class OrderDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  partialOk?: boolean;
   @ApiProperty({ type: [ItemDto] })
   @IsArray()
   @ArrayMinSize(1)
@@ -248,6 +252,10 @@ export class OrderPatchDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  partialOk?: boolean;
   @ApiPropertyOptional({ type: [ItemDto] })
   @ValidateIf((_o, v) => v !== undefined)
   @IsArray()
@@ -408,6 +416,14 @@ export class PaymentEditDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+}
+export class PackingDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @IsUUID("all", { each: true })
+  items!: string[];
+  @IsBoolean() packed!: boolean;
 }
 export class OrderCancelDto {
   @IsInt() version!: number;

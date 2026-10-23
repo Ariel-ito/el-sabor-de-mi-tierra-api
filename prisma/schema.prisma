@@ -143,6 +143,8 @@ model Order {
   cancelledAt    DateTime?
   cancelReason   String?
   cancelledItems Json?
+  // The customer takes it in parts: packed and delivered as products arrive.
+  partialOk      Boolean          @default(false)
 
   @@index([roundId])
   @@index([kind, createdAt])
@@ -166,6 +168,9 @@ model OrderItem {
   // Pending pounds supplied from a later cycle; the sale stays in its own.
   fulfillRoundId    String?           @db.Uuid
   fulfillRound      Round?            @relation("CarriedItems", fields: [fulfillRoundId], references: [id])
+  // Put in the customer's bag; cleared when the encargo changes or the line
+  // is delivered only in part.
+  packedAt          DateTime?
 
   @@index([fulfillRoundId])
 }
