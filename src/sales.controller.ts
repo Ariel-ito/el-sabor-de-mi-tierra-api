@@ -30,6 +30,7 @@ import {
 } from "./inventory";
 import { decimal, orderInclude, serializeOrder, shipping } from "./math";
 export const WALK_IN = "Cliente de paso";
+const SET_ASIDE_NEEDS_CUSTOMER = "Elige el cliente para apartarle el producto.";
 type Tx = Prisma.TransactionClient;
 async function walkInCustomer(tx: Tx, customerId?: string) {
   return (
@@ -134,8 +135,8 @@ export class SalesController {
       })
     ).map(serializeOrder);
   }
-  // Walk-in sale from a cycle's free stock: delivered on the spot, optionally
-  // paid, and counted in that cycle.
+  // Sale from a cycle's free stock, counted in that cycle: delivered on the
+  // spot or set aside for later, optionally paid.
   @Post("sales") createSale(@Body() body: SaleDto, @Req() req: AuthRequest) {
     return this.db.$transaction(
       async (tx) => {
@@ -152,6 +153,8 @@ export class SalesController {
         const soldAt = new Date(body.soldAt);
         if (soldAt > new Date())
           throw new BadRequestException("La venta no puede ser futura.");
+        if (body.deliverNow === false && !body.customerId)
+          throw new BadRequestException(SET_ASIDE_NEEDS_CUSTOMER);
         let roundId = body.roundId;
         if (roundId) await lockRound(tx, roundId);
         else {
@@ -178,7 +181,9 @@ export class SalesController {
             items: { create: items },
           },
         });
-        await deliverAll(tx, created.id, soldAt);
+        // Set aside: reserved for the customer, delivered and paid later.
+        if (body.deliverNow === false) await allocateStock(tx);
+        else await deliverAll(tx, created.id, soldAt);
         const view = serializeOrder(
           await tx.order.findUniqueOrThrow({
             where: { id: created.id },
@@ -244,6 +249,15 @@ export class SalesController {
       async (tx) => {
         await stockLock(tx);
         const before = await this.editable(tx, id, body.version);
+        // A sale set aside stays set aside; one delivered on the spot is
+        // delivered again. One delivered in part keeps its deliveries.
+        const delivered = before.deliveries.length > 0;
+        if (delivered && serializeOrder(before).deliveryStatus !== "DELIVERED")
+          throw new ConflictException(
+            "Esta venta ya se entregó en parte; registra el resto de la entrega en lugar de editarla.",
+          );
+        if (!delivered && !body.customerId)
+          throw new BadRequestException(SET_ASIDE_NEEDS_CUSTOMER);
         const soldAt = before.deliveries[0]?.deliveredAt ?? new Date();
         await clearItems(tx, id);
         const items = await stockItems(tx, before.roundId, body.items, soldAt);
@@ -266,7 +280,8 @@ export class SalesController {
             items: { create: items },
           },
         });
-        await deliverAll(tx, id, soldAt);
+        if (delivered) await deliverAll(tx, id, soldAt);
+        else await allocateStock(tx);
         const after = serializeOrder(
           await tx.order.findUniqueOrThrow({
             where: { id },

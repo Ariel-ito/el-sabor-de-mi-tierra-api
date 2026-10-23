@@ -56,6 +56,8 @@ model Supplier {
   createdAt                  DateTime    @default(now())
   products                   Product[]
   items                      OrderItem[]
+  // Off: hidden from new purchases and products; its history stays.
+  active                     Boolean     @default(true)
 }
 
 model Product {

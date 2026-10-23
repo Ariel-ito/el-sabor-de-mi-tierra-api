@@ -557,6 +557,37 @@ op=good('POST',f"/orders/{op['id']}/deliveries",{'id':uid(),'version':op['versio
 check(op['items'][0]['packedAt'] is None and op['items'][0]['deliveredQuantity']=='1','a line delivered in part is packed again for the rest')
 op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'partialOk':False})
 check(op['partialOk'] is False,'taking it in parts can be turned off')
+# Ventas apartadas: sin entregar ni cobrar todavía.
+sV=good('POST','/suppliers',{'name':'Prov ventas '+u,'region':'Olancho'})
+pV=good('POST','/products',{'name':'Queso venta '+u,'salePrice':'50','estimatedCost':'30','defaultSupplierId':sV['id']})
+rV=good('POST','/rounds',{'name':'Ventas '+u,'opensAt':'2026-10-10T00:00:00Z','closesAt':'2026-10-20T00:00:00Z'})
+bV=good('POST','/purchases',{'id':uid(),'roundId':rV['id'],'supplierId':sV['id'],'orderedAt':'2026-10-11T10:00:00Z','items':[{'productId':pV['id'],'quantity':'4','quotedUnitCost':'30'}]})
+good('POST',f"/purchases/{bV['id']}/receipts",{'id':uid(),'version':bV['version'],'receivedAt':'2026-10-12T10:00:00Z','invoice':'VEN '+u,'globalDiscount':'0','items':[{'purchaseItemId':bV['items'][0]['id'],'quantity':'4','unitCost':'30','unitDiscount':'0'}]})
+lv=lambda q:[{'productId':pV['id'],'quantity':q,'unitPrice':'50'}]
+cV=good('POST','/customers',{'name':'Cliente apartado '+u})
+check(call('POST','/sales',{'id':uid(),'roundId':rV['id'],'soldAt':'2026-10-13T10:00:00Z','items':lv('1'),'deliverNow':False})[0]==400,'setting stock aside needs the customer')
+sv=good('POST','/sales',{'id':uid(),'roundId':rV['id'],'customerId':cV['id'],'soldAt':'2026-10-13T10:00:00Z','items':lv('3'),'deliverNow':False})
+check(sv['deliveryStatus']!='DELIVERED' and not sv['deliveries'] and sv['items'][0]['reservedQuantity']=='3' and sv['paymentStatus']=='UNPAID','a sale can set stock aside without delivering or charging')
+check(call('POST','/sales',{'id':uid(),'roundId':rV['id'],'soldAt':'2026-10-13T11:00:00Z','items':lv('2')})[0]==400,'stock set aside by a sale is not sold twice')
+check(call('PATCH',f"/sales/{sv['id']}",{'version':sv['version'],'items':lv('2')})[0]==400,'a sale set aside keeps its customer')
+sv=good('PATCH',f"/sales/{sv['id']}",{'version':sv['version'],'customerId':cV['id'],'items':lv('2')})
+check(not sv['deliveries'] and sv['items'][0]['reservedQuantity']=='2','editing a sale set aside keeps it set aside')
+sv=good('POST',f"/orders/{sv['id']}/deliveries",{'id':uid(),'version':sv['version'],'deliveredAt':'2026-10-14T10:00:00Z','items':[{'orderItemId':sv['items'][0]['id'],'quantity':'1'}]})
+check(sv['deliveryStatus']=='PARTIAL','a sale set aside is delivered later like an encargo')
+check(call('PATCH',f"/sales/{sv['id']}",{'version':sv['version'],'customerId':cV['id'],'items':lv('2')})[0]==409,'a sale delivered in part is not rebuilt')
+sd=good('POST','/sales',{'id':uid(),'roundId':rV['id'],'soldAt':'2026-10-13T12:00:00Z','items':lv('1')})
+check(sd['deliveryStatus']=='DELIVERED','a sale is still delivered on the spot by default')
+# Desactivar un proveedor desactiva sus productos.
+sX=good('POST','/suppliers',{'name':'Prov inactivo '+u,'region':'Olancho'})
+px=[good('POST','/products',{'name':f'Prod {n} '+u,'salePrice':'10','estimatedCost':'5','defaultSupplierId':sX['id']}) for n in ('X1','X2')]
+upd=lambda **k: good('PATCH',f"/suppliers/{sX['id']}",{'name':sX['name'],'region':'Olancho',**k})
+act=lambda pid: next(p for p in good('GET','/products') if p['id']==pid)['active']
+check(upd(active=False)['active'] is False and not act(px[0]['id']) and not act(px[1]['id']),'turning a supplier off turns its products off')
+check(upd(active=True)['active'] is True and not act(px[0]['id']),'turning it back on alone leaves its products off')
+upd(active=False);upd(active=True,withProducts=True)
+check(act(px[0]['id']) and act(px[1]['id']) and next(x for x in good('GET','/suppliers') if x['id']==sX['id'])['active'] is True,'a supplier can come back with its products')
+good('PATCH',f"/suppliers/{sV['id']}",{'name':sV['name'],'region':'Olancho','active':False})
+check(good('POST','/sales',{'id':uid(),'roundId':rV['id'],'soldAt':'2026-10-13T13:00:00Z','items':lv('1')})['deliveryStatus']=='DELIVERED','what is left of an inactive product still sells')
 # Cambiar contraseña: cierra las otras sesiones.
 pw=os.environ['DAIRY_TEST_PASSWORD'];email=os.environ['DAIRY_TEST_EMAIL'];new=pw+'-nueva'
 other=good('POST','/auth/login',{'email':email,'password':pw})['accessToken']

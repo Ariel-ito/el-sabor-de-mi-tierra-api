@@ -69,7 +69,19 @@ export class CatalogController {
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Supplier" WHERE id=${id}::uuid FOR UPDATE`;
       const before = await tx.supplier.findUniqueOrThrow({ where: { id } });
-      const after = await tx.supplier.update({ where: { id }, data: body });
+      const { withProducts, ...data } = body;
+      const after = await tx.supplier.update({ where: { id }, data });
+      // Off takes its products with it; back on, only when asked.
+      if (before.active && data.active === false)
+        await tx.product.updateMany({
+          where: { defaultSupplierId: id, active: true },
+          data: { active: false },
+        });
+      if (!before.active && data.active === true && withProducts)
+        await tx.product.updateMany({
+          where: { defaultSupplierId: id, active: false },
+          data: { active: true },
+        });
       await audit(tx, req.actor.id, "Supplier", id, "UPDATE", before, after);
       return after;
     });
@@ -78,7 +90,8 @@ export class CatalogController {
     return this.db.supplier.findMany({ orderBy: { name: "asc" } });
   }
   @Post("suppliers") createSupplier(@Body() body: SupplierDto) {
-    return this.db.supplier.create({ data: body });
+    const { withProducts: _, ...data } = body;
+    return this.db.supplier.create({ data });
   }
   private product(p: any) {
     const { components, ...rest } = p;

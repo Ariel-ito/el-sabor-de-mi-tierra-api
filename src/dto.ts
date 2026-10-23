@@ -81,6 +81,16 @@ export class SupplierDto {
   @ApiProperty() @IsString() @MinLength(1) @MaxLength(100) region!: string;
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  active?: boolean;
+  // When turning a supplier back on, also its products (turning it off
+  // always turns them off).
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  withProducts?: boolean;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsString()
   @MaxLength(50)
   phone?: string;
@@ -318,6 +328,10 @@ export class SaleDto {
   @ValidateIf((_o, v) => v !== undefined) @IsUUID() roundId?: string;
   @ValidateIf((_o, v) => v !== undefined) @IsUUID() customerId?: string;
   @IsDateString({ strict: true }) soldAt!: string;
+  // false: the stock is set aside for the customer and delivered later.
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  deliverNow?: boolean;
   @ValidateIf((_o, v) => v !== undefined)
   @IsString()
   @MaxLength(2000)
