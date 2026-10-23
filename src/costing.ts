@@ -166,7 +166,10 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
         lot: zero(),
         cycle: zero(),
         estimate: zero(),
+        // Order lines with this product: how often it is asked for, in any unit.
+        orders: 0,
       };
+      row.orders++;
       for (const t of isLb ? [row, total, pounds] : [row, total]) {
         t.sales = t.sales.add(sales);
         t.quantity = t.quantity.add(c.quantity);
@@ -206,6 +209,7 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
         name: r.name,
         unit: r.unit,
         category: r.category,
+        orders: r.orders,
         ...view(r),
       })),
   };

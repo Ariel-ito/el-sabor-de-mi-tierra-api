@@ -518,6 +518,8 @@ check(sh=={'shipping':'30.00','deliveries':2,'free':1,'fuel':'45.00'},'cycle shi
 check(call('GET',f"/rounds/{uid()}/shipping")[0]==404,'shipping of an unknown cycle is 404')
 st=next(x for x in good('GET','/statistics')['cycles'] if x['id']==rS['id'])
 check(st['orderCount']==3 and st['customerCount']==1,'cancelled encargos are not counted as orders')
+ck=next(x for x in st['productCosts'] if x['productId']==p['id'])
+check(ck['orders']==3 and ck['category'],'each product says in how many orders of the cycle it was')
 check(st['expenses']=='144.00' and sorted(i['amount'] for i in st['expenseItems'])==['45.00','99.00'] and 'Transporte y combustible' in [i['category'] for i in st['expenseItems']],'cycle statistics itemize the expenses of the cycle')
 check(st['shipping']=='30.00' and st['grossProfit'] is not None and round(float(st['grossProfit'])-float(st['absorbed']['total'])+float(st['shipping'])-float(st['expenses']),2)==round(float(st['result']),2),'net profit is gross minus losses plus shipping minus expenses')
 cl=next(x for x in good('GET','/collections')['customers'] if x['customer']['id']==cN['id'])
