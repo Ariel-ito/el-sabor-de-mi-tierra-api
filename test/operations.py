@@ -588,6 +588,30 @@ upd(active=False);upd(active=True,withProducts=True)
 check(act(px[0]['id']) and act(px[1]['id']) and next(x for x in good('GET','/suppliers') if x['id']==sX['id'])['active'] is True,'a supplier can come back with its products')
 good('PATCH',f"/suppliers/{sV['id']}",{'name':sV['name'],'region':'Olancho','active':False})
 check(good('POST','/sales',{'id':uid(),'roundId':rV['id'],'soldAt':'2026-10-13T13:00:00Z','items':lv('1')})['deliveryStatus']=='DELIVERED','what is left of an inactive product still sells')
+# Gastos a un ciclo o al negocio; los que alcanzan para varios ciclos se reparten.
+cats=good('GET','/finance/categories')
+emp=next(x for x in cats if x['name']=='Empaque e insumos');equipo=next(x for x in cats if x['name']=='Equipo')
+check(key('TRANSPORT')['scope']=='CYCLE' and emp['scope']=='CYCLE' and equipo['scope']=='BUSINESS','bags and fuel go to a cycle by default; equipment to the business')
+nc=good('POST','/finance/categories',{'name':'Hielo '+u,'kind':'EXPENSE','scope':'CYCLE'})
+check(nc['scope']=='CYCLE' and good('PATCH',f"/finance/categories/{nc['id']}",{'scope':'BUSINESS'})['scope']=='BUSINESS' and good('PATCH',f"/finance/categories/{key('TRANSPORT')['id']}",{'scope':'CYCLE'})['scope']=='CYCLE','a category, even a system one, says where its expenses go by default')
+# Three back-to-back cycles of their own, so no other run's cycle falls between.
+t0=_dt.datetime(2030,1,1)+_dt.timedelta(minutes=int(u,16)%500000)
+iso=lambda t:t.strftime('%Y-%m-%dT%H:%M:%SZ')
+rg=[good('POST','/rounds',{'name':f'Gasto repartido {n} '+u,'opensAt':iso(t0+_dt.timedelta(seconds=n)),'closesAt':iso(t0+_dt.timedelta(days=3))}) for n in range(3)]
+bags=good('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=3))
+cooler=good('POST','/finance/movements',mv(categoryId=equipo['id'],amount='500',spreadCycles=3))
+check(bags['spreadCycles']==3 and cooler['spreadCycles']==1 and cooler['round'] is None,'only an expense of a cycle spreads over cycles')
+check(call('POST','/finance/movements',mv(roundId=rg[0]['id'],spreadCycles=13))[0]==400,'an expense spreads over at most 12 cycles')
+cs={x['id']:x for x in good('GET','/statistics')['cycles']}
+check([cs[r['id']]['expenses'] for r in rg]==['33.34','33.33','33.33'],'supplies for three cycles are split in cents over them')
+it=cs[rg[1]['id']]['expenseItems'][0]
+check(it['amount']=='33.33' and it['total']=='100.00' and it['part']==2 and it['of']==3,'each cycle lists its part of the supplies')
+good('POST','/finance/movements',mv(categoryId=key('TRANSPORT')['id'],roundId=rg[1]['id'],amount='30',spreadCycles=2))
+check(good('GET',f"/rounds/{rg[2]['id']}/shipping")['fuel']=='15.00','fuel bought for two cycles counts half in each')
+check(next(x for x in good('GET','/finance/summary')['cycleExpenses'] if x['id']==rg[2]['id'])['expenses']=='48.33','accounting lists each cycle with its part')
+good('PATCH',f"/finance/movements/{bags['id']}",{**mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=1),'id':bags['id'],'version':bags['version']})
+cs={x['id']:x for x in good('GET','/statistics')['cycles']}
+check([cs[r['id']]['expenses'] for r in rg]==['100.00','15.00','15.00'],'changing how many cycles it lasts moves the parts')
 # Cambiar contraseña: cierra las otras sesiones.
 pw=os.environ['DAIRY_TEST_PASSWORD'];email=os.environ['DAIRY_TEST_EMAIL'];new=pw+'-nueva'
 other=good('POST','/auth/login',{'email':email,'password':pw})['accessToken']

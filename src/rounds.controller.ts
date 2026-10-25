@@ -17,6 +17,7 @@ import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import { cycleCosts, Lot } from "./costing";
+import { cycleShares, oldestFirst } from "./finance";
 import { applyClosing, closingState } from "./closing";
 import { CloseRoundDto, RoundDto, RoundPatchDto } from "./dto";
 import { allocateStock, inventory, stockLock } from "./inventory";
@@ -151,6 +152,7 @@ export class RoundsController {
         .sub(r.withdrawals.reduce((a, x) => a.add(x.quantity), decimal(0))),
     }));
     const result = statistics(rounds, orders);
+    const shares = cycleShares(oldestFirst(rounds), expenses);
     return {
       ...result,
       cycles: result.cycles.map((c) => {
@@ -159,11 +161,11 @@ export class RoundsController {
           orders.filter((o) => o.roundId === c.id),
           lots,
         );
-        const own = expenses.filter((e) => e.roundId === c.id);
-        const spent = own.reduce((a, e) => a.add(e.amount), decimal(0));
+        const own = shares.get(c.id) ?? [];
+        const spent = own.reduce((a, s) => a.add(s.amount), decimal(0));
         const fuel = own
-          .filter((e) => e.category.systemKey === "TRANSPORT")
-          .reduce((a, e) => a.add(e.amount), decimal(0));
+          .filter((s) => s.expense.category.systemKey === "TRANSPORT")
+          .reduce((a, s) => a.add(s.amount), decimal(0));
         // Sales, cost and profit per line of business.
         const byCategory = new Map<
           string,
@@ -200,13 +202,15 @@ export class RoundsController {
               : money(decimal(costs.result).add(costs.absorbed.total)),
           expenses: money(spent),
           expenseItems: own
-            .sort((a, b) => a.date.getTime() - b.date.getTime())
-            .map((e) => ({
+            .sort((a, b) => a.expense.date.getTime() - b.expense.date.getTime())
+            .map(({ expense: e, amount, part, of }) => ({
               id: e.id,
               date: e.date,
               description: e.description,
               category: e.category.name,
-              amount: money(e.amount),
+              amount: money(amount),
+              // Bought for several cycles: this one's part of the total.
+              ...(of > 1 ? { total: money(e.amount), part, of } : {}),
             })),
           fuel: money(fuel),
           result:
@@ -224,28 +228,31 @@ export class RoundsController {
   ) {
     if (!(await this.db.round.findUnique({ where: { id } })))
       throw new NotFoundException("Ciclo no encontrado.");
-    const [orders, fuel] = await Promise.all([
+    const [orders, rounds, transport] = await Promise.all([
       this.db.order.findMany({
         where: { roundId: id, cancelledAt: null, delivery: "DELIVERY" },
         select: { shippingFee: true },
       }),
-      this.db.financeMovement.aggregate({
+      this.db.round.findMany({ select: { id: true, opensAt: true } }),
+      this.db.financeMovement.findMany({
         where: {
-          roundId: id,
+          roundId: { not: null },
           kind: "EXPENSE",
           status: "PAID",
           category: { systemKey: "TRANSPORT" },
         },
-        _sum: { amount: true },
       }),
     ]);
+    const fuel = (
+      cycleShares(oldestFirst(rounds), transport).get(id) ?? []
+    ).reduce((a, s) => a.add(s.amount), decimal(0));
     return {
       shipping: money(
         orders.reduce((a, o) => a.add(o.shippingFee), decimal(0)),
       ),
       deliveries: orders.length,
       free: orders.filter((o) => o.shippingFee.isZero()).length,
-      fuel: money(fuel._sum.amount ?? decimal(0)),
+      fuel: money(fuel),
     };
   }
   @Get("rounds/:id/purchase-summary") async summary(

@@ -31,8 +31,10 @@ import {
   ReimburseDto,
 } from "./dto";
 import {
+  cycleShares,
   Entry,
   monthRange,
+  oldestFirst,
   OWNERS,
   recurringPeriods,
   summarize,
@@ -79,6 +81,7 @@ type Line = {
   owner: string | null;
   groupId: string | null;
   round: { id: string; name: string } | null;
+  spreadCycles?: number;
   recurringId: string | null;
   version: number | null;
   // Cobros: their encargo or sale, to fix or void them from Contabilidad.
@@ -106,6 +109,7 @@ const fromMovement = (m: MovementRow): Line => ({
   owner: m.owner,
   groupId: m.groupId,
   round: m.round,
+  spreadCycles: m.spreadCycles,
   recurringId: m.recurringId,
   version: m.version,
 });
@@ -283,6 +287,8 @@ export class FinanceController {
           name: body.name.trim(),
           kind: body.kind,
           inResult: body.inResult ?? true,
+          scope:
+            body.kind === "EXPENSE" ? (body.scope ?? "BUSINESS") : "BUSINESS",
         },
       });
       await audit(
@@ -332,6 +338,7 @@ export class FinanceController {
           name: body.name?.trim(),
           inResult: body.inResult ?? undefined,
           active: body.active ?? undefined,
+          scope: before.kind === "EXPENSE" ? body.scope : undefined,
         },
       });
       await audit(
@@ -453,6 +460,8 @@ export class FinanceController {
       personalMode: paidBy === "BUSINESS" ? null : body.personalMode!,
       owner,
       roundId: body.roundId ?? null,
+      spreadCycles:
+        body.kind === "EXPENSE" && body.roundId ? (body.spreadCycles ?? 1) : 1,
     };
   }
   @Post("movements") async createMovement(
@@ -836,26 +845,28 @@ export class FinanceController {
         result: s.result,
       };
     });
-    // Operating expenses tied to a cycle reduce that cycle's result.
-    const cycles = new Map<
-      string,
-      { id: string; name: string; expenses: Prisma.Decimal }
-    >();
-    for (const l of all)
-      if (
-        l.round &&
-        (l.source === "MANUAL" || l.source === "RECURRING") &&
-        l.status === "PAID" &&
-        l.kind === "EXPENSE" &&
-        l.category.inResult
-      ) {
-        const c = cycles.get(l.round.id) ?? {
-          ...l.round,
-          expenses: decimal(0),
-        };
-        c.expenses = c.expenses.add(l.amount);
-        cycles.set(l.round.id, c);
-      }
+    // Operating expenses tied to a cycle reduce that cycle's result, split
+    // when bought for several cycles.
+    const rounds = await this.db.round.findMany({
+      select: { id: true, name: true, opensAt: true },
+    });
+    const shares = cycleShares(
+      oldestFirst(rounds),
+      all
+        .filter(
+          (l) =>
+            l.round &&
+            (l.source === "MANUAL" || l.source === "RECURRING") &&
+            l.status === "PAID" &&
+            l.kind === "EXPENSE" &&
+            l.category.inResult,
+        )
+        .map((l) => ({
+          roundId: l.round!.id,
+          spreadCycles: l.spreadCycles ?? 1,
+          amount: l.amount,
+        })),
+    );
     return {
       month: selected,
       monthly: summarize(inMonth.map(toEntry)),
@@ -881,10 +892,16 @@ export class FinanceController {
           ),
         };
       }),
-      cycleExpenses: [...cycles.values()].map((c) => ({
-        ...c,
-        expenses: money(c.expenses),
-      })),
+      cycleExpenses: oldestFirst(rounds)
+        .reverse()
+        .filter((id) => shares.has(id))
+        .map((id) => ({
+          id,
+          name: rounds.find((r) => r.id === id)!.name,
+          expenses: money(
+            shares.get(id)!.reduce((a, s) => a.add(s.amount), decimal(0)),
+          ),
+        })),
     };
   }
 }

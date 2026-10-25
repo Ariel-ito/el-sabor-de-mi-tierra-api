@@ -483,6 +483,7 @@ export class FinanceCategoryDto {
   @IsString() @MinLength(1) @MaxLength(80) @Matches(/\S/) name!: string;
   @IsIn(["INCOME", "EXPENSE"]) kind!: string;
   @ValidateIf(OPTIONAL) @IsBoolean() inResult?: boolean;
+  @ValidateIf(OPTIONAL) @IsIn(["CYCLE", "BUSINESS"]) scope?: string;
 }
 export class FinanceCategoryPatchDto {
   @ValidateIf(OPTIONAL)
@@ -493,6 +494,7 @@ export class FinanceCategoryPatchDto {
   name?: string;
   @ValidateIf(OPTIONAL) @IsBoolean() inResult?: boolean;
   @ValidateIf(OPTIONAL) @IsBoolean() active?: boolean;
+  @ValidateIf(OPTIONAL) @IsIn(["CYCLE", "BUSINESS"]) scope?: string;
 }
 export class MovementDto {
   @IsUUID() id!: string;
@@ -507,6 +509,7 @@ export class MovementDto {
     string | null;
   @ValidateIf(OPTIONAL) @IsIn(["ARIEL", "MARIA"]) owner?: string | null;
   @ValidateIf(OPTIONAL) @IsUUID() roundId?: string | null;
+  @ValidateIf(OPTIONAL) @IsInt() @Min(1) @Max(12) spreadCycles?: number;
 }
 export class MovementPatchDto extends MovementDto {
   @IsInt() @Min(1) version!: number;

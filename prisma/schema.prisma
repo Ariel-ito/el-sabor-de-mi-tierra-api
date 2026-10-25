@@ -325,6 +325,9 @@ model FinanceCategory {
   // False for money that moves without being profit: owner contributions,
   // profit distributions, loans.
   inResult  Boolean            @default(true)
+  // Expenses: where a new one goes by default. CYCLE (bags, fuel) counts in
+  // a cycle's result; BUSINESS (equipment, phone) only in the business total.
+  scope     String             @default("BUSINESS")
   active    Boolean            @default(true)
   createdAt DateTime           @default(now())
   movements FinanceMovement[]
@@ -352,8 +355,12 @@ model FinanceMovement {
   // Owner of a contribution or a profit distribution.
   owner        String?
   groupId      String?           @db.Uuid
+  // An expense with a cycle is that cycle's; without one, the business's.
   roundId      String?           @db.Uuid
   round        Round?            @relation(fields: [roundId], references: [id])
+  // Supplies bought for several cycles: split evenly over this many cycles,
+  // starting with roundId's.
+  spreadCycles Int               @default(1)
   recurringId  String?           @db.Uuid
   recurring    RecurringExpense? @relation(fields: [recurringId], references: [id])
   periodKey    String?

@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { Entry, monthRange, recurringPeriods, summarize } from "../src/finance";
+import {
+  cycleShares,
+  Entry,
+  monthRange,
+  recurringPeriods,
+  summarize,
+} from "../src/finance";
 test("months follow Honduras time", () => {
   const { start, end } = monthRange("2026-12");
   assert.equal(start.toISOString(), "2026-12-01T06:00:00.000Z");
@@ -131,4 +137,25 @@ test("a reimbursed personal payment leaves the till when repaid", () => {
   ]);
   assert.equal(s.cashExpected, "-30.00");
   assert.equal(s.owedToOwnersTotal, "0.00");
+});
+test("an expense for several cycles is split in cents over the next cycles", () => {
+  const shares = cycleShares(
+    ["a", "b", "c", "d"],
+    [
+      { roundId: "b", spreadCycles: 3, amount: "100" },
+      { roundId: "d", spreadCycles: 2, amount: "50" },
+      { roundId: "a", spreadCycles: 1, amount: "20" },
+      { roundId: null, spreadCycles: 1, amount: "999" },
+    ],
+  );
+  const of = (id: string) =>
+    (shares.get(id) ?? []).map((s) => [s.amount.toFixed(2), s.part, s.of]);
+  assert.deepEqual(of("a"), [["20.00", 1, 1]]);
+  assert.deepEqual(of("b"), [["33.34", 1, 3]]);
+  assert.deepEqual(of("c"), [["33.33", 2, 3]]);
+  // The fourth cycle gets the last third and the first half of its own.
+  assert.deepEqual(of("d"), [
+    ["33.33", 3, 3],
+    ["25.00", 1, 2],
+  ]);
 });

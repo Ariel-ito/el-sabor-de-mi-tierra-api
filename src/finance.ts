@@ -77,6 +77,47 @@ export type Entry = {
   recurring: boolean;
 };
 const zero = () => decimal(0);
+// Cycles in the order an expense spreads over them.
+export const oldestFirst = (rounds: { id: string; opensAt: Date }[]) =>
+  [...rounds]
+    .sort(
+      (a, b) =>
+        a.opensAt.getTime() - b.opensAt.getTime() || a.id.localeCompare(b.id),
+    )
+    .map((r) => r.id);
+// Each cycle's part of the expenses assigned to cycles. One bought for
+// several cycles is split evenly, in cents, over its cycle and the next ones
+// (cycles oldest first); parts for cycles not created yet wait for them.
+export function cycleShares<
+  T extends {
+    roundId: string | null;
+    spreadCycles: number;
+    amount: Prisma.Decimal.Value;
+  },
+>(cycles: string[], expenses: T[]) {
+  const shares = new Map<
+    string,
+    { expense: T; amount: Prisma.Decimal; part: number; of: number }[]
+  >();
+  for (const expense of expenses) {
+    const at = expense.roundId ? cycles.indexOf(expense.roundId) : -1;
+    if (at < 0) continue;
+    const of = Math.max(1, expense.spreadCycles);
+    const cents = decimal(expense.amount).mul(100).round().toNumber();
+    const base = Math.floor(cents / of);
+    for (let k = 0; k < of && at + k < cycles.length; k++) {
+      const list = shares.get(cycles[at + k]) ?? [];
+      list.push({
+        expense,
+        amount: decimal(base + (k < cents - base * of ? 1 : 0)).div(100),
+        part: k + 1,
+        of,
+      });
+      shares.set(cycles[at + k], list);
+    }
+  }
+  return shares;
+}
 const perOwner = () =>
   Object.fromEntries(OWNERS.map((o) => [o.key, zero()])) as Record<
     OwnerKey,
