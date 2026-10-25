@@ -598,20 +598,30 @@ check(nc['scope']=='CYCLE' and good('PATCH',f"/finance/categories/{nc['id']}",{'
 t0=_dt.datetime(2030,1,1)+_dt.timedelta(minutes=int(u,16)%500000)
 iso=lambda t:t.strftime('%Y-%m-%dT%H:%M:%SZ')
 rg=[good('POST','/rounds',{'name':f'Gasto repartido {n} '+u,'opensAt':iso(t0+_dt.timedelta(seconds=n)),'closesAt':iso(t0+_dt.timedelta(days=3))}) for n in range(3)]
-bags=good('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=3))
-cooler=good('POST','/finance/movements',mv(categoryId=equipo['id'],amount='500',spreadCycles=3))
-check(bags['spreadCycles']==3 and cooler['spreadCycles']==1 and cooler['round'] is None,'only an expense of a cycle spreads over cycles')
-check(call('POST','/finance/movements',mv(roundId=rg[0]['id'],spreadCycles=13))[0]==400,'an expense spreads over at most 12 cycles')
+check(emp['systemKey']=='PACKAGING' and call('PATCH',f"/finance/categories/{emp['id']}",{'active':False})[0]==400,'packaging is a system category')
+# Dated now, so no packaging from an earlier run is newer.
+now=_dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
+bagsAt=iso(now-_dt.timedelta(hours=1))
+bags=good('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=3,date=bagsAt))
+cooler=good('POST','/finance/movements',mv(categoryId=equipo['id'],amount='500'))
+check(bags['spreadCycles']==3 and cooler['spreadCycles']==1 and cooler['round'] is None,'packaging of a cycle spreads over cycles; the business expense does not')
+check(call('POST','/finance/movements',mv(categoryId=equipo['id'],amount='500',spreadCycles=3))[0]==400 and call('POST','/finance/movements',mv(categoryId=key('TRANSPORT')['id'],roundId=rg[1]['id'],amount='30',spreadCycles=2))[0]==400 and call('POST','/finance/movements',mv(categoryId=emp['id'],amount='30',spreadCycles=2))[0]==400,'only packaging of a cycle is split over cycles')
+check(call('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[0]['id'],spreadCycles=13))[0]==400,'packaging spreads over at most 12 cycles')
 cs={x['id']:x for x in good('GET','/statistics')['cycles']}
-check([cs[r['id']]['expenses'] for r in rg]==['33.34','33.33','33.33'],'supplies for three cycles are split in cents over them')
+check([cs[r['id']]['expenses'] for r in rg]==['33.34','33.33','33.33'],'packaging for three cycles is split in cents over them')
 it=cs[rg[1]['id']]['expenseItems'][0]
-check(it['amount']=='33.33' and it['total']=='100.00' and it['part']==2 and it['of']==3,'each cycle lists its part of the supplies')
-good('POST','/finance/movements',mv(categoryId=key('TRANSPORT')['id'],roundId=rg[1]['id'],amount='30',spreadCycles=2))
-check(good('GET',f"/rounds/{rg[2]['id']}/shipping")['fuel']=='15.00','fuel bought for two cycles counts half in each')
-check(next(x for x in good('GET','/finance/summary')['cycleExpenses'] if x['id']==rg[2]['id'])['expenses']=='48.33','accounting lists each cycle with its part')
-good('PATCH',f"/finance/movements/{bags['id']}",{**mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=1),'id':bags['id'],'version':bags['version']})
+check(it['amount']=='33.33' and it['total']=='100.00' and it['part']==2 and it['of']==3,'each cycle lists its part of the packaging')
+good('POST','/finance/movements',mv(categoryId=key('TRANSPORT')['id'],roundId=rg[1]['id'],amount='30'))
+check(good('GET',f"/rounds/{rg[1]['id']}/shipping")['fuel']=='30.00' and next(x for x in good('GET','/finance/summary')['cycleExpenses'] if x['id']==rg[1]['id'])['expenses']=='63.33','accounting lists each cycle with its part')
+sup=lambda r:good('GET',f"/rounds/{r['id']}/supplies")['ending']
+check(not sup(rg[1]) and [(x['id'],x['cycles']) for x in sup(rg[2])]==[(bags['id'],3)],'the last cycle of the packaging warns to check the bags')
+newer=good('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[2]['id'],amount='40',date=iso(now)))
+check(not sup(rg[2]),'newer packaging silences the warning')
+good('DELETE',f"/finance/movements/{newer['id']}?version={newer['version']}")
+check(call('GET',f"/rounds/{uid()}/supplies")[0]==404,'supplies of an unknown cycle is 404')
+good('PATCH',f"/finance/movements/{bags['id']}",{**mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=1,date=bagsAt),'id':bags['id'],'version':bags['version']})
 cs={x['id']:x for x in good('GET','/statistics')['cycles']}
-check([cs[r['id']]['expenses'] for r in rg]==['100.00','15.00','15.00'],'changing how many cycles it lasts moves the parts')
+check([cs[r['id']]['expenses'] for r in rg]==['100.00','30.00','0.00'] and not sup(rg[2]),'changing how many cycles it lasts moves the parts')
 # Cambiar contraseña: cierra las otras sesiones.
 pw=os.environ['DAIRY_TEST_PASSWORD'];email=os.environ['DAIRY_TEST_EMAIL'];new=pw+'-nueva'
 other=good('POST','/auth/login',{'email':email,'password':pw})['accessToken']

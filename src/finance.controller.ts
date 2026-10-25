@@ -449,6 +449,17 @@ export class FinanceController {
       !(await tx.round.findUnique({ where: { id: body.roundId } }))
     )
       throw new BadRequestException("Ciclo inexistente.");
+    // Bags bought in bulk last several cycles; nothing else is split.
+    const spread = body.spreadCycles ?? 1;
+    if (
+      spread > 1 &&
+      (category.systemKey !== "PACKAGING" ||
+        body.kind !== "EXPENSE" ||
+        !body.roundId)
+    )
+      throw new BadRequestException(
+        "Solo el empaque de un ciclo se reparte entre varios ciclos.",
+      );
     return {
       kind: body.kind,
       date: new Date(body.date),
@@ -460,8 +471,7 @@ export class FinanceController {
       personalMode: paidBy === "BUSINESS" ? null : body.personalMode!,
       owner,
       roundId: body.roundId ?? null,
-      spreadCycles:
-        body.kind === "EXPENSE" && body.roundId ? (body.spreadCycles ?? 1) : 1,
+      spreadCycles: spread,
     };
   }
   @Post("movements") async createMovement(

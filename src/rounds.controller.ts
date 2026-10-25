@@ -221,6 +221,40 @@ export class RoundsController {
       }),
     };
   }
+  // Packaging bought for several cycles whose last one is this cycle, unless
+  // newer packaging was registered since: time to check the bags.
+  @Get("rounds/:id/supplies") async supplies(
+    @Param("id", ParseUUIDPipe) id: string,
+  ) {
+    if (!(await this.db.round.findUnique({ where: { id } })))
+      throw new NotFoundException("Ciclo no encontrado.");
+    const [rounds, packaging] = await Promise.all([
+      this.db.round.findMany({ select: { id: true, opensAt: true } }),
+      this.db.financeMovement.findMany({
+        where: {
+          kind: "EXPENSE",
+          status: "PAID",
+          category: { systemKey: "PACKAGING" },
+        },
+        orderBy: { date: "desc" },
+      }),
+    ]);
+    const latest = packaging[0]?.date.getTime() ?? 0;
+    const ending = (
+      cycleShares(oldestFirst(rounds), packaging).get(id) ?? []
+    ).filter(
+      (s) => s.of > 1 && s.part === s.of && s.expense.date.getTime() >= latest,
+    );
+    return {
+      ending: ending.map(({ expense: e, of }) => ({
+        id: e.id,
+        date: e.date,
+        description: e.description,
+        amount: money(e.amount),
+        cycles: of,
+      })),
+    };
+  }
   // Shipping charged in the cycle next to what fuel and transport cost
   // (Contabilidad), for Reparto: does the shipping cover the trips?
   @Get("rounds/:id/shipping") async shipping(
