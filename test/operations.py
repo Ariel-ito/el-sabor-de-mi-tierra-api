@@ -599,9 +599,9 @@ t0=_dt.datetime(2030,1,1)+_dt.timedelta(minutes=int(u,16)%500000)
 iso=lambda t:t.strftime('%Y-%m-%dT%H:%M:%SZ')
 rg=[good('POST','/rounds',{'name':f'Gasto repartido {n} '+u,'opensAt':iso(t0+_dt.timedelta(seconds=n)),'closesAt':iso(t0+_dt.timedelta(days=3))}) for n in range(3)]
 check(emp['systemKey']=='PACKAGING' and call('PATCH',f"/finance/categories/{emp['id']}",{'active':False})[0]==400,'packaging is a system category')
-# Dated now, so no packaging from an earlier run is newer.
-now=_dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)
-bagsAt=iso(now-_dt.timedelta(hours=1))
+# Dated later today, so no packaging registered before the run is newer.
+now=_dt.datetime.now(_dt.timezone.utc).replace(tzinfo=None)+_dt.timedelta(hours=12)
+bagsAt=iso(now-_dt.timedelta(minutes=1))
 bags=good('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=3,date=bagsAt))
 cooler=good('POST','/finance/movements',mv(categoryId=equipo['id'],amount='500'))
 check(bags['spreadCycles']==3 and cooler['spreadCycles']==1 and cooler['round'] is None,'packaging of a cycle spreads over cycles; the business expense does not')
@@ -609,6 +609,9 @@ check(call('POST','/finance/movements',mv(categoryId=equipo['id'],amount='500',s
 check(call('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[0]['id'],spreadCycles=13))[0]==400,'packaging spreads over at most 12 cycles')
 cs={x['id']:x for x in good('GET','/statistics')['cycles']}
 check([cs[r['id']]['expenses'] for r in rg]==['33.34','33.33','33.33'],'packaging for three cycles is split in cents over them')
+check(cs[rg[0]['id']]['packaging']=='33.34' and cs[rg[1]['id']]['packaging']=='33.33' and cs[rg[0]['id']]['status']=='OPEN','each cycle says what its packaging cost')
+cv=cs[rV['id']]
+check(cv['purchases']=='120.00' and cv['undelivered']==1 and cs[rg[0]['id']]['undelivered']==0,'each cycle says what suppliers invoiced and how many orders are not handed over')
 it=cs[rg[1]['id']]['expenseItems'][0]
 check(it['amount']=='33.33' and it['total']=='100.00' and it['part']==2 and it['of']==3,'each cycle lists its part of the packaging')
 good('POST','/finance/movements',mv(categoryId=key('TRANSPORT')['id'],roundId=rg[1]['id'],amount='30'))

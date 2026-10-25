@@ -163,6 +163,35 @@ export class RoundsController {
         );
         const own = shares.get(c.id) ?? [];
         const spent = own.reduce((a, s) => a.add(s.amount), decimal(0));
+        const packaging = own
+          .filter((s) => s.expense.category.systemKey === "PACKAGING")
+          .reduce((a, s) => a.add(s.amount), decimal(0));
+        // Encargos and sales of the cycle not handed over in full yet.
+        const undelivered = orders.filter(
+          (o) =>
+            o.roundId === c.id &&
+            !o.cancelledAt &&
+            o.items
+              .reduce(
+                (a, i) =>
+                  a.add(
+                    i.allocations.reduce(
+                      (b, x) => b.add(x.delivered),
+                      decimal(0),
+                    ),
+                  ),
+                decimal(0),
+              )
+              .lt(o.items.reduce((a, i) => a.add(i.quantity), decimal(0))),
+        ).length;
+        // What the suppliers invoiced for the cycle, extra stock included.
+        const purchases = receipts
+          .filter(
+            (r) =>
+              r.purchaseItem.purchase.roundId === c.id &&
+              r.purchaseItem.purchase.kind === "PURCHASE",
+          )
+          .reduce((a, r) => a.add(r.netTotal), decimal(0));
         const fuel = own
           .filter((s) => s.expense.category.systemKey === "TRANSPORT")
           .reduce((a, s) => a.add(s.amount), decimal(0));
@@ -183,6 +212,10 @@ export class RoundsController {
         return {
           ...c,
           ...costs,
+          status: rounds.find((r) => r.id === c.id)?.status,
+          undelivered,
+          purchases: money(purchases),
+          packaging: money(packaging),
           categories: [...byCategory.entries()]
             .map(([name, r]) => ({
               name,
