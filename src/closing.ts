@@ -9,7 +9,7 @@ export type CloseDecision = {
   reason: "LOSS" | "SAMPLE" | "PERSONAL" | "KEEP";
   quantity: string;
 };
-// What stands between a cycle and closing: its encargos must be fully
+// What stands between a cycle and closing: its encargos and set-aside sales must be fully
 // delivered, and every free pound it bought needs a destination.
 export async function closingState(
   tx: Prisma.TransactionClient,
@@ -17,7 +17,7 @@ export async function closingState(
 ) {
   await allocateStock(tx);
   const orders = await tx.order.findMany({
-    where: { roundId, kind: "ENCARGO" },
+    where: { roundId, cancelledAt: null },
     include: {
       customer: true,
       items: { include: { product: true, allocations: true } },
@@ -60,6 +60,7 @@ export async function closingState(
         ? [
             {
               orderId: o.id,
+              kind: o.kind,
               customerName: o.customer.name,
               fromRound: null,
               items,
@@ -73,6 +74,7 @@ export async function closingState(
         ? [
             {
               orderId: i.orderId,
+              kind: i.order.kind,
               customerName: i.order.customer.name,
               fromRound: i.order.round.name,
               items: [
@@ -122,6 +124,7 @@ export async function closingState(
       invoice: l.invoice,
       available: l.available,
       unitCost: l.unitCost,
+      expiryStatus: l.expiryStatus,
     }));
   return { pendingDeliveries, leftovers, carriedOut };
 }
@@ -134,11 +137,21 @@ export async function applyClosing(
   const { pendingDeliveries, leftovers } = await closingState(tx, roundId);
   if (pendingDeliveries.length)
     throw new ConflictException(
-      `Hay ${pendingDeliveries.length === 1 ? "1 encargo" : `${pendingDeliveries.length} encargos`} con producto sin entregar. Entrégalos antes de cerrar el ciclo.`,
+      "Todavía hay encargos o ventas apartadas con producto sin entregar. Registra las entregas antes de cerrar el ciclo.",
     );
   for (const d of decisions) {
     const lot = leftovers.find((l) => l.receiptItemId === d.receiptItemId);
-    if (lot) assertQuantity(lot.unit, d.quantity, lot.productName);
+    if (lot) {
+      assertQuantity(lot.unit, d.quantity, lot.productName);
+      if (
+        lot.expiryStatus === "EXPIRED" &&
+        decimal(d.quantity).gt(0) &&
+        (d.reason === "SAMPLE" || d.reason === "PERSONAL")
+      )
+        throw new BadRequestException(
+          `${lot.productName}: el lote está vencido; registra merma o mantenlo bloqueado en existencia.`,
+        );
+    }
   }
   for (const d of decisions)
     if (!leftovers.some((l) => l.receiptItemId === d.receiptItemId))

@@ -344,7 +344,7 @@ export class OrdersController {
         include: orderInclude,
       });
       await audit(tx, req.actor.id, "Order", after.id, "CREATE", null, after);
-      await allocateStock(tx);
+      await allocateStock(tx, { orderId: after.id, requireStock: true });
       return serializeOrder(
         await tx.order.findUniqueOrThrow({
           where: { id: after.id },
@@ -499,7 +499,7 @@ export class OrdersController {
             data: { packedAt: null },
           });
       }
-      await allocateStock(tx);
+      await allocateStock(tx, { orderId: id, requireStock: true });
       const after = await tx.order.findUniqueOrThrow({
         where: { id },
         include: orderInclude,
@@ -757,7 +757,10 @@ export class OrdersController {
             }),
           );
         }
-        await allocateStock(tx);
+        await allocateStock(tx, {
+          orderId: id,
+          at: new Date(body.deliveredAt),
+        });
         const order = await tx.order.findUniqueOrThrow({
           where: { id },
           include: orderInclude,

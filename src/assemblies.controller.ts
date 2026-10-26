@@ -20,7 +20,7 @@ import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import { AssemblyDto, RecipeDto } from "./dto";
-import { allocateStock, inventory, stockLock } from "./inventory";
+import { allocateStock, inventory, stockLock, expiredOn } from "./inventory";
 import { decimal, money } from "./math";
 import { assertQuantity, qtyText } from "./units";
 const assemblyInclude = {
@@ -183,8 +183,9 @@ export class AssembliesController {
         assertQuantity(combo.unit, body.quantity, combo.name);
         await allocateStock(tx);
         // Oldest free stock received by then, whatever its cycle.
-        const lots = (await inventory(tx)).filter(
-          (l) => new Date(l.receivedAt) <= date,
+        const lots = (await inventory(tx, date)).filter(
+          (l) =>
+            new Date(l.receivedAt) <= date && !expiredOn(l.expiresAt, date),
         );
         const takes: { lotId: string; quantity: Prisma.Decimal }[] = [];
         let cost = decimal(0);

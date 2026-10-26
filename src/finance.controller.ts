@@ -38,6 +38,7 @@ import {
   OWNERS,
   recurringPeriods,
   summarize,
+  summarizePeriod,
 } from "./finance";
 import { decimal, money } from "./math";
 type Tx = Prisma.TransactionClient;
@@ -113,7 +114,8 @@ const fromMovement = (m: MovementRow): Line => ({
   recurringId: m.recurringId,
   version: m.version,
 });
-const toEntry = (l: Line): Entry => ({
+const toEntry = (l: Line): Entry & { date: Date } => ({
+  date: l.date,
   kind: l.kind,
   status: l.status,
   amount: l.amount,
@@ -633,6 +635,11 @@ export class FinanceController {
           "Este movimiento no está pendiente de devolver.",
         );
       if (before.reimbursedAt) return fromMovement(before);
+      const repaymentAt = new Date(body.date);
+      if (repaymentAt < before.date || repaymentAt > new Date())
+        throw new BadRequestException(
+          "La devolución debe estar entre la fecha del gasto y hoy.",
+        );
       const after = await tx.financeMovement.update({
         where: { id },
         data: { reimbursedAt: new Date(body.date), version: { increment: 1 } },
@@ -838,16 +845,14 @@ export class FinanceController {
     const all = await this.lines();
     const allTime = summarize(all.map(toEntry));
     const { start, end } = monthRange(selected);
-    const inMonth = all.filter((l) => l.date >= start && l.date < end);
+    const entries = all.map(toEntry);
     // Six months ending at the selected one, for the trend.
     const months = Array.from({ length: 6 }, (_, i) => {
       const [y, m] = selected.split("-").map(Number);
       const d = new Date(Date.UTC(y, m - 1 - (5 - i), 1));
       const key = d.toISOString().slice(0, 7);
       const r = monthRange(key);
-      const s = summarize(
-        all.filter((l) => l.date >= r.start && l.date < r.end).map(toEntry),
-      );
+      const s = summarizePeriod(entries, r);
       return {
         month: key,
         income: s.income,
@@ -879,7 +884,7 @@ export class FinanceController {
     );
     return {
       month: selected,
-      monthly: summarize(inMonth.map(toEntry)),
+      monthly: summarizePeriod(entries, { start, end }),
       allTime,
       months,
       owners: OWNERS.map((o) => {

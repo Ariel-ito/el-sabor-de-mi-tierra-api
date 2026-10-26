@@ -199,3 +199,37 @@ export function summarize(entries: Entry[]) {
       .sort((a, b) => Number(b.amount) - Number(a.amount)),
   };
 }
+
+// Expenses belong to the day they happened; cash reimbursements belong to the
+// day the business paid its owner back. Read the complete ledger for a period
+// so a reimbursement of a prior month's expense cannot disappear.
+export function summarizePeriod(
+  entries: (Entry & { date: Date })[],
+  range: { start: Date; end: Date },
+) {
+  const inPeriod = (date: Date) => date >= range.start && date < range.end;
+  const selected = entries.filter((e) => inPeriod(e.date));
+  const result = summarize(
+    selected.map((e) => ({
+      ...e,
+      reimbursedAt:
+        e.reimbursedAt && e.reimbursedAt < range.end ? e.reimbursedAt : null,
+    })),
+  );
+  // Original personal expenses never take cash from the business themselves.
+  const originalCash = summarize(
+    selected.map((e) => ({ ...e, reimbursedAt: null })),
+  ).cashExpected;
+  const repaid = entries
+    .filter(
+      (e) =>
+        e.status === "PAID" &&
+        e.kind === "EXPENSE" &&
+        e.paidBy !== "BUSINESS" &&
+        e.personalMode === "REIMBURSE" &&
+        e.reimbursedAt &&
+        inPeriod(e.reimbursedAt),
+    )
+    .reduce((sum, e) => sum.add(e.amount), decimal(0));
+  return { ...result, cashExpected: money(decimal(originalCash).sub(repaid)) };
+}

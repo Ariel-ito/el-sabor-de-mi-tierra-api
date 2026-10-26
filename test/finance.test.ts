@@ -6,6 +6,7 @@ import {
   monthRange,
   recurringPeriods,
   summarize,
+  summarizePeriod,
 } from "../src/finance";
 test("months follow Honduras time", () => {
   const { start, end } = monthRange("2026-12");
@@ -158,4 +159,61 @@ test("an expense for several cycles is split in cents over the next cycles", () 
     ["33.33", 3, 3],
     ["25.00", 1, 2],
   ]);
+});
+
+test("a later reimbursement changes only the repayment month's cash", () => {
+  const entries = [
+    {
+      ...entry({
+        amount: "100",
+        paidBy: "ARIEL",
+        personalMode: "REIMBURSE",
+        reimbursedAt: new Date("2026-10-01T06:00:00Z"),
+      }),
+      date: new Date("2026-09-20T18:00:00Z"),
+    },
+    {
+      ...entry({ kind: "INCOME", amount: "300" }),
+      date: new Date("2026-09-20T18:00:00Z"),
+    },
+  ];
+  const september = summarizePeriod(entries, monthRange("2026-09"));
+  const october = summarizePeriod(entries, monthRange("2026-10"));
+  assert.equal(september.cashExpected, "300.00");
+  assert.equal(september.expense, "100.00");
+  assert.equal(september.owedToOwnersTotal, "100.00");
+  assert.equal(october.cashExpected, "-100.00");
+  assert.equal(october.expense, "0.00");
+  assert.equal(summarize(entries).cashExpected, "200.00");
+});
+test("reimbursements outside a period and skipped expenses do not change its cash", () => {
+  const entries = [
+    {
+      ...entry({
+        amount: "100",
+        paidBy: "ARIEL",
+        personalMode: "REIMBURSE",
+        reimbursedAt: new Date("2026-11-01T06:00:00Z"),
+      }),
+      date: new Date("2026-09-01T18:00:00Z"),
+    },
+    {
+      ...entry({
+        amount: "50",
+        paidBy: "MARIA",
+        personalMode: "REIMBURSE",
+        status: "SKIPPED",
+        reimbursedAt: new Date("2026-10-05T18:00:00Z"),
+      }),
+      date: new Date("2026-09-01T18:00:00Z"),
+    },
+  ];
+  assert.equal(
+    summarizePeriod(entries, monthRange("2026-10")).cashExpected,
+    "0.00",
+  );
+  assert.equal(
+    summarizePeriod(entries, monthRange("2026-11")).cashExpected,
+    "-100.00",
+  );
 });

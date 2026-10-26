@@ -27,6 +27,7 @@ import {
   consumeReserved,
   inventory,
   stockLock,
+  expiredOn,
 } from "./inventory";
 import { decimal, orderInclude, serializeOrder, shipping } from "./math";
 export const WALK_IN = "Cliente de paso";
@@ -57,8 +58,8 @@ async function stockItems(
   await allocateStock(tx);
   // Any cycle's free stock received by then, oldest first; the sale itself
   // counts in `roundId`.
-  const lots = (await inventory(tx)).filter(
-    (l) => new Date(l.receivedAt) <= soldAt,
+  const lots = (await inventory(tx, soldAt)).filter(
+    (l) => new Date(l.receivedAt) <= soldAt && !expiredOn(l.expiresAt, soldAt),
   );
   const items: Prisma.OrderItemCreateWithoutOrderInput[] = [];
   for (const line of lines) {
@@ -97,7 +98,7 @@ async function stockItems(
 }
 // Walk-in sales leave with the customer: reserve and deliver every pound.
 async function deliverAll(tx: Tx, orderId: string, soldAt: Date) {
-  await allocateStock(tx);
+  await allocateStock(tx, { orderId, at: soldAt, requireStock: true });
   const items = await tx.orderItem.findMany({ where: { orderId } });
   for (const item of items)
     await consumeReserved(tx, item.id, item.quantity, soldAt);
@@ -162,6 +163,8 @@ export class SalesController {
           roundId = (await inventory(tx)).find(
             (l) =>
               l.productId === body.items[0].productId &&
+              !expiredOn(l.expiresAt, soldAt) &&
+              new Date(l.receivedAt) <= soldAt &&
               decimal(l.available).gt(0),
           )?.roundId;
           if (!roundId)
@@ -182,7 +185,12 @@ export class SalesController {
           },
         });
         // Set aside: reserved for the customer, delivered and paid later.
-        if (body.deliverNow === false) await allocateStock(tx);
+        if (body.deliverNow === false)
+          await allocateStock(tx, {
+            orderId: created.id,
+            at: soldAt,
+            requireStock: true,
+          });
         else await deliverAll(tx, created.id, soldAt);
         const view = serializeOrder(
           await tx.order.findUniqueOrThrow({
@@ -281,7 +289,12 @@ export class SalesController {
           },
         });
         if (delivered) await deliverAll(tx, id, soldAt);
-        else await allocateStock(tx);
+        else
+          await allocateStock(tx, {
+            orderId: id,
+            at: soldAt,
+            requireStock: true,
+          });
         const after = serializeOrder(
           await tx.order.findUniqueOrThrow({
             where: { id },

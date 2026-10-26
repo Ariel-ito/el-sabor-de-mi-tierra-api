@@ -41,6 +41,7 @@ export class InventoryController {
     @Req() req: AuthRequest,
   ) {
     return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
       const before = await tx.receiptItem.findUnique({ where: { id } });
       if (!before) throw new NotFoundException("Lote no encontrado.");
       const after = await tx.receiptItem.update({
@@ -48,6 +49,7 @@ export class InventoryController {
         data: { expiresAt: body.expiresAt ? new Date(body.expiresAt) : null },
       });
       await audit(tx, req.actor.id, "ReceiptItem", id, "EXPIRY", before, after);
+      await allocateStock(tx);
       return { id, expiresAt: after.expiresAt };
     });
   }
@@ -75,6 +77,10 @@ export class InventoryController {
         ]);
       if (!lot || decimal(lot.available).lt(body.quantity))
         throw new BadRequestException("La salida supera lo libre del lote.");
+      if (lot.expiryStatus === "EXPIRED" && body.reason !== "LOSS")
+        throw new BadRequestException(
+          "El lote está vencido. Solo puede salir como merma; corrige la fecha si fue registrada por error.",
+        );
       const result = await tx.stockWithdrawal.create({ data: body });
       await audit(
         tx,

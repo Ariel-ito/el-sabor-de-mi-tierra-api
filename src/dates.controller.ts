@@ -15,8 +15,8 @@ import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db } from "./core";
 import { DateFixDto } from "./dto";
-import { stockLock } from "./inventory";
-import { money } from "./math";
+import { expiredOn, stockLock } from "./inventory";
+import { decimal, money } from "./math";
 import { qtyText } from "./units";
 type Tx = Prisma.TransactionClient;
 // Fixing dates entered late: when an encargo or sale was made, delivered and
@@ -192,20 +192,46 @@ export class DatesController {
               },
             },
           });
-          // Each delivery needs at least one of its lots already received.
-          for (const d of order.deliveries)
-            for (const di of d.items) {
-              const item = order.items.find((i) => i.id === di.orderItemId);
-              const arrivals = (item?.allocations ?? []).map((a) =>
-                a.receiptItem.receipt.receivedAt.getTime(),
+          // Replay delivered quantities across their recorded lots. Correcting
+          // a date must not put a delivery before arrival or after expiry.
+          for (const item of order.items) {
+            const lots = item.allocations
+              .map((a) => ({
+                remaining: a.delivered,
+                lot: a.receiptItem,
+              }))
+              .sort(
+                (a, b) =>
+                  (a.lot.expiresAt?.getTime() ?? Infinity) -
+                    (b.lot.expiresAt?.getTime() ?? Infinity) ||
+                  a.lot.receipt.receivedAt.getTime() -
+                    b.lot.receipt.receivedAt.getTime(),
               );
-              if (!item || !arrivals.length) continue;
-              const first = Math.min(...arrivals);
-              if (d.deliveredAt.getTime() < first)
-                throw new BadRequestException(
-                  `${order.customer.name}: la entrega de ${item.product.name} quedaría antes de que llegara el producto (${new Date(first).toISOString().slice(0, 10)}). Corrige también la fecha de esa recepción.`,
-                );
+            for (const delivery of [...order.deliveries].sort(
+              (a, b) => a.deliveredAt.getTime() - b.deliveredAt.getTime(),
+            )) {
+              for (const di of delivery.items.filter(
+                (i) => i.orderItemId === item.id,
+              )) {
+                let needed = decimal(di.quantity);
+                for (const row of lots) {
+                  if (
+                    row.lot.receipt.receivedAt > delivery.deliveredAt ||
+                    expiredOn(row.lot.expiresAt, delivery.deliveredAt)
+                  )
+                    continue;
+                  const take = Prisma.Decimal.min(needed, row.remaining);
+                  row.remaining = row.remaining.sub(take);
+                  needed = needed.sub(take);
+                  if (needed.isZero()) break;
+                }
+                if (needed.gt(0))
+                  throw new BadRequestException(
+                    `${order.customer.name}: la entrega de ${item.product.name} quedaría antes de su recepción o después de su vencimiento. Revisa las fechas de entrega y recepción.`,
+                  );
+              }
             }
+          }
         }
         return { changed: body.changes.length };
       },

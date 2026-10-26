@@ -12,7 +12,8 @@
     "user:create": "tsx scripts/create-user.ts",
     "format": "prettier --write src scripts test package.json tsconfig.json railway.json compose.yaml README.md && prisma format",
     "test:integration": "python3 test/integration.py",
-    "test:operations": "python3 test/operations.py"
+    "test:operations": "python3 test/operations.py",
+    "test:repairs": "python3 test/repairs.py"
   },
   "engines": {
     "node": ">=20.19 <25"

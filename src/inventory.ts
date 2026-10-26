@@ -18,6 +18,8 @@ const lotInclude = {
   withdrawals: true,
 } as const;
 const hnDay = (d: Date) => Math.floor((d.getTime() - 6 * 3600000) / 86400000);
+export const expiredOn = (expiresAt: Date | string | null, at = new Date()) =>
+  !!expiresAt && hnDay(new Date(expiresAt)) < hnDay(at);
 // Days left counted in Honduras calendar days; SOON inside the warning window.
 export function expiry(
   expiresAt: Date | null,
@@ -34,7 +36,7 @@ export function expiry(
     expiryStatus: daysLeft < 0 ? "EXPIRED" : daysLeft <= warn ? "SOON" : "OK",
   };
 }
-export async function inventory(tx: Prisma.TransactionClient) {
+export async function inventory(tx: Prisma.TransactionClient, at = new Date()) {
   const lots = await tx.receiptItem.findMany({
     include: lotInclude,
     orderBy: [{ receipt: { receivedAt: "asc" } }, { id: "asc" }],
@@ -66,12 +68,16 @@ export async function inventory(tx: Prisma.TransactionClient) {
       invoice: l.receipt.invoice,
       quantity: l.quantity.toString(),
       available: l.quantity.sub(assigned).sub(withdrawn).toString(),
+      sellable:
+        expiredOn(l.expiresAt, at) || l.receipt.receivedAt > at
+          ? "0"
+          : l.quantity.sub(assigned).sub(withdrawn).toString(),
       reserved: assigned.sub(delivered).toString(),
       delivered: delivered.toString(),
       onHand: l.quantity.sub(delivered).sub(withdrawn).toString(),
       unitCost: l.effectiveUnitCost.toString(),
       withdrawals: l.withdrawals,
-      ...expiry(l.expiresAt, l.purchaseItem.product),
+      ...expiry(l.expiresAt, l.purchaseItem.product, at),
     };
   });
 }
@@ -80,12 +86,46 @@ export async function inventory(tx: Prisma.TransactionClient) {
 // Pass 1 matches the line's supplier for every line; pass 2 lets encargos
 // still short take the same product from another supplier of their cycle, so
 // buying elsewhere never strands an encargo nor steals a supplier's own lots.
-export async function allocateStock(tx: Prisma.TransactionClient) {
-  const lots = await inventory(tx);
+export async function allocateStock(
+  tx: Prisma.TransactionClient,
+  operation: { orderId?: string; at?: Date; requireStock?: boolean } = {},
+) {
   const items = await tx.orderItem.findMany({
-    include: { allocations: true, order: true },
+    include: {
+      allocations: { include: { receiptItem: { include: { receipt: true } } } },
+      order: true,
+    },
     orderBy: [{ order: { createdAt: "asc" } }, { id: "asc" }],
   });
+  const now = new Date();
+  const dateFor = (item: (typeof items)[number]) =>
+    operation.orderId === item.orderId && operation.at ? operation.at : now;
+  // Release only undelivered stock that cannot be used at the operation date.
+  // Keep delivered quantities attached to the original lot for traceability.
+  for (const item of items) {
+    const date = dateFor(item);
+    const kept = [];
+    for (const a of item.allocations) {
+      if (
+        a.quantity.gt(a.delivered) &&
+        (expiredOn(a.receiptItem.expiresAt, date) ||
+          a.receiptItem.receipt.receivedAt > date)
+      ) {
+        if (a.delivered.isZero()) {
+          await tx.stockAllocation.delete({ where: { id: a.id } });
+          continue;
+        }
+        await tx.stockAllocation.update({
+          where: { id: a.id },
+          data: { quantity: a.delivered },
+        });
+        a.quantity = a.delivered;
+      }
+      kept.push(a);
+    }
+    item.allocations = kept;
+  }
+  const lots = await inventory(tx);
   const need = new Map(
     items.map((item) => [
       item.id,
@@ -98,6 +138,9 @@ export async function allocateStock(tx: Prisma.TransactionClient) {
     let left = need.get(item.id)!;
     for (const lot of lots) {
       if (left.lte(0)) break;
+      const at = dateFor(item);
+      if (expiredOn(lot.expiresAt, at) || new Date(lot.receivedAt) > at)
+        continue;
       // Encargo lines draw from their own cycle, or from the cycle a pending
       // line was carried to; STOCK lines (stock added to an encargo and every
       // walk-in sale) use free stock of any cycle, oldest first.
@@ -132,7 +175,12 @@ export async function allocateStock(tx: Prisma.TransactionClient) {
   };
   for (const item of items) {
     await fill(item, false);
-    if (item.source === "STOCK" && need.get(item.id)!.gt(0))
+    if (
+      operation.requireStock &&
+      operation.orderId === item.orderId &&
+      item.source === "STOCK" &&
+      need.get(item.id)!.gt(0)
+    )
       throw new ConflictException(
         "No hay suficiente producto libre. Actualiza el inventario.",
       );
@@ -181,7 +229,11 @@ export async function consumeReserved(
     orderBy: { receiptItem: { receipt: { receivedAt: "asc" } } },
   });
   for (const a of allocations) {
-    if (a.receiptItem.receipt.receivedAt > deliveredAt) continue;
+    if (
+      a.receiptItem.receipt.receivedAt > deliveredAt ||
+      expiredOn(a.receiptItem.expiresAt, deliveredAt)
+    )
+      continue;
     const take = Prisma.Decimal.min(need, a.quantity.sub(a.delivered));
     if (take.gt(0))
       await tx.stockAllocation.update({
@@ -193,6 +245,6 @@ export async function consumeReserved(
   }
   if (need.gt(0))
     throw new BadRequestException(
-      "No hay suficiente producto recibido y reservado para esta entrega. Registra la recepción primero.",
+      "No hay suficiente producto recibido, vigente y reservado para esta entrega. Revisa las recepciones y los vencimientos.",
     );
 }
