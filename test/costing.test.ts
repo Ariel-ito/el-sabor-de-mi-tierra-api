@@ -124,3 +124,70 @@ test("absorbed cost values losses and samples at lot cost and keeps free stock a
   assert.equal(view.absorbed.kept.cost, "60.00");
   assert.equal(view.result, "-150.00");
 });
+test("each product carries its loss and samples, even unsold", () => {
+  const view = cycleCosts(
+    "r",
+    [{ items: [item()] }],
+    [
+      {
+        productId: "q",
+        supplierId: "s",
+        roundId: "r",
+        quantity: "5",
+        unitCost: "60",
+        withdrawals: [
+          { reason: "LOSS", quantity: "0.5" },
+          { reason: "SAMPLE", quantity: "1" },
+          { reason: "PERSONAL", quantity: "1" },
+        ],
+      },
+      {
+        productId: "c",
+        supplierId: "s",
+        roundId: "r",
+        quantity: "2",
+        unitCost: "40",
+        name: "Crema",
+        category: "Lácteos",
+        withdrawals: [{ reason: "LOSS", quantity: "2" }],
+      },
+    ],
+  );
+  const q = view.productCosts.find((p) => p.productId === "q")!;
+  const c = view.productCosts.find((p) => p.productId === "c")!;
+  assert.deepEqual([q.loss, q.sample], ["30.00", "60.00"]);
+  assert.deepEqual(
+    [c.name, c.sales, c.loss, c.orders],
+    ["Crema", "0.00", "80.00", 0],
+  );
+});
+test("each customer's sales, cost, shipping and balance; no cost while missing", () => {
+  const order = (customerId: string, extra: any = {}) => ({
+    customerId,
+    customer: { name: customerId.toUpperCase() },
+    delivery: "DELIVERY",
+    shippingFee: "30",
+    payments: [{ amount: "100" }],
+    ...extra,
+  });
+  const view = cycleCosts(
+    "r",
+    [
+      order("ana", { items: [item()] }),
+      order("ana", { items: [item({ quantity: "1" })], delivery: "PICKUP" }),
+      order("beto", {
+        items: [item({ estimatedUnitCost: null, supplierId: "x" })],
+      }),
+      order("ana", { items: [], cancelledAt: new Date() }),
+    ],
+    lots,
+  );
+  const [ana, beto] = view.customerCosts;
+  assert.equal(ana.name, "ANA");
+  assert.equal(ana.orders, 2);
+  assert.equal(ana.sales, "270.00");
+  assert.equal(ana.cost, "186.00");
+  assert.equal(ana.shipping, "30.00");
+  assert.equal(ana.balance, "110.00");
+  assert.equal(beto.cost, null);
+});

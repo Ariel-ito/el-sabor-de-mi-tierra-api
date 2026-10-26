@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import { decimal, money, saleTotal } from "./math";
+import { decimal, money, orderBalance, saleTotal, shippingOf } from "./math";
 type D = Prisma.Decimal;
 export type Lot = {
   productId: string;
@@ -9,6 +9,9 @@ export type Lot = {
   unitCost: Prisma.Decimal.Value;
   free?: Prisma.Decimal.Value;
   unit?: string;
+  // For products lost or given away without being sold in the cycle.
+  name?: string;
+  category?: string;
   withdrawals?: { reason: string; quantity: Prisma.Decimal.Value }[];
 };
 // What a cycle bought that left without being sold, valued at lot cost.
@@ -130,8 +133,11 @@ function summarize(
     },
   };
 }
-export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
+export function cycleCosts(roundId: string, orders: any[], allLots: Lot[]) {
+  // Only this cycle's lots matter below; filtering once keeps it fast.
+  const lots = allLots.filter((l) => l.roundId === roundId);
   const rows = new Map<string, any>();
+  const buyers = new Map<string, any>();
   const zero = () => decimal(0);
   const total = {
     sales: zero(),
@@ -150,10 +156,37 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
     cycle: zero(),
     estimate: zero(),
   };
-  for (const order of orders)
+  for (const order of orders) {
+    // What each customer bought, what it cost and what they still owe.
+    const buyer =
+      order.cancelledAt || !order.customerId || !order.items.length
+        ? null
+        : buyers.get(order.customerId) || {
+            customerId: order.customerId,
+            name: order.customer?.name ?? "",
+            orders: 0,
+            sales: zero(),
+            cost: zero(),
+            missing: zero(),
+            shipping: zero(),
+            balance: zero(),
+          };
+    if (buyer) {
+      buyer.orders++;
+      buyer.shipping = buyer.shipping.add(shippingOf(order));
+      buyer.balance = buyer.balance.add(orderBalance(order).balance);
+      buyers.set(order.customerId, buyer);
+    }
     for (const item of order.items) {
       const c = lineCost(item, roundId, lots);
       const sales = decimal(saleTotal(item));
+      if (buyer) {
+        buyer.sales = buyer.sales.add(sales);
+        buyer.cost = buyer.cost.add(c.cost);
+        buyer.missing = buyer.missing.add(
+          c.quantity.sub(c.lot).sub(c.cycle).sub(c.estimate),
+        );
+      }
       const isLb = (item.product.unit ?? "lb") === "lb";
       const row = rows.get(item.productId) || {
         productId: item.productId,
@@ -180,6 +213,34 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
       }
       rows.set(item.productId, row);
     }
+  }
+  // Each product's loss and samples, at the cost of the cycle's lots.
+  const wasted = new Map<string, { loss: D; sample: D }>();
+  for (const lot of lots) {
+    if (lot.roundId !== roundId) continue;
+    for (const w of lot.withdrawals || []) {
+      if (w.reason !== "LOSS" && w.reason !== "SAMPLE") continue;
+      const row = wasted.get(lot.productId) ?? { loss: zero(), sample: zero() };
+      const cost = decimal(w.quantity).mul(lot.unitCost);
+      if (w.reason === "LOSS") row.loss = row.loss.add(cost);
+      else row.sample = row.sample.add(cost);
+      wasted.set(lot.productId, row);
+      if (!rows.has(lot.productId) && lot.name)
+        rows.set(lot.productId, {
+          productId: lot.productId,
+          name: lot.name,
+          unit: lot.unit ?? "lb",
+          category: lot.category ?? "Sin categoría",
+          sales: zero(),
+          quantity: zero(),
+          cost: zero(),
+          lot: zero(),
+          cycle: zero(),
+          estimate: zero(),
+          orders: 0,
+        });
+    }
+  }
   const view = (r: typeof total) =>
     summarize(r.sales, r.quantity, r.cost, r.lot, r.cycle, r.estimate);
   const lost = absorbed(roundId, lots);
@@ -211,6 +272,20 @@ export function cycleCosts(roundId: string, orders: any[], lots: Lot[]) {
         category: r.category,
         orders: r.orders,
         ...view(r),
+        loss: money(wasted.get(r.productId)?.loss ?? zero()),
+        sample: money(wasted.get(r.productId)?.sample ?? zero()),
+      })),
+    customerCosts: [...buyers.values()]
+      .sort((a, b) => b.sales.comparedTo(a.sales))
+      .map((r) => ({
+        customerId: r.customerId,
+        name: r.name,
+        orders: r.orders,
+        sales: money(r.sales),
+        // Null while some of what they bought has no cost yet.
+        cost: r.missing.gt(0) ? null : money(r.cost),
+        shipping: money(r.shipping),
+        balance: money(r.balance),
       })),
   };
 }

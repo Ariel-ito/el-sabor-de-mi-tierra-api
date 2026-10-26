@@ -612,6 +612,9 @@ check([cs[r['id']]['expenses'] for r in rg]==['33.34','33.33','33.33'],'packagin
 check(cs[rg[0]['id']]['packaging']=='33.34' and cs[rg[1]['id']]['packaging']=='33.33' and cs[rg[0]['id']]['status']=='OPEN','each cycle says what its packaging cost')
 cv=cs[rV['id']]
 check(cv['purchases']=='120.00' and cv['undelivered']==1 and cs[rg[0]['id']]['undelivered']==0,'each cycle says what suppliers invoiced and how many orders are not handed over')
+buyer=next(x for x in cv['customerCosts'] if x['customerId']==cV['id'])
+check(buyer['orders']==1 and buyer['sales']=='100.00' and buyer['cost']=='60.00' and buyer['balance']=='100.00','each customer of a cycle has sales, cost and what they owe')
+check(next(x for x in cv['productCosts'] if x['productId']==pV['id'])['loss']=='0.00','each product of a cycle has its loss')
 it=cs[rg[1]['id']]['expenseItems'][0]
 check(it['amount']=='33.33' and it['total']=='100.00' and it['part']==2 and it['of']==3,'each cycle lists its part of the packaging')
 good('POST','/finance/movements',mv(categoryId=key('TRANSPORT')['id'],roundId=rg[1]['id'],amount='30'))

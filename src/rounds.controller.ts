@@ -124,7 +124,12 @@ export class RoundsController {
       }),
       this.db.receiptItem.findMany({
         include: {
-          purchaseItem: { include: { purchase: true, product: true } },
+          purchaseItem: {
+            include: {
+              purchase: true,
+              product: { include: { category: true } },
+            },
+          },
           allocations: true,
           withdrawals: true,
         },
@@ -146,6 +151,8 @@ export class RoundsController {
       quantity: r.quantity,
       unitCost: r.effectiveUnitCost,
       unit: r.purchaseItem.product.unit,
+      name: r.purchaseItem.product.name,
+      category: r.purchaseItem.product.category?.name,
       withdrawals: r.withdrawals,
       free: r.quantity
         .sub(r.allocations.reduce((a, x) => a.add(x.quantity), decimal(0)))
