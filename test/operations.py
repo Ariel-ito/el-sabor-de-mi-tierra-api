@@ -625,6 +625,8 @@ newer=good('POST','/finance/movements',mv(categoryId=emp['id'],roundId=rg[2]['id
 check(not sup(rg[2]),'newer packaging silences the warning')
 good('DELETE',f"/finance/movements/{newer['id']}?version={newer['version']}")
 check(call('GET',f"/rounds/{uid()}/supplies")[0]==404,'supplies of an unknown cycle is 404')
+be=good('GET','/finance/summary')['businessExpenses']
+check(float(be['total'])>=500 and any(i['name']==equipo['name'] and float(i['amount'])>=500 for i in be['items']),'the business expenses without a cycle are summed by category')
 good('PATCH',f"/finance/movements/{bags['id']}",{**mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=1,date=bagsAt),'id':bags['id'],'version':bags['version']})
 cs={x['id']:x for x in good('GET','/statistics')['cycles']}
 check([cs[r['id']]['expenses'] for r in rg]==['100.00','30.00','0.00'] and not sup(rg[2]),'changing how many cycles it lasts moves the parts')

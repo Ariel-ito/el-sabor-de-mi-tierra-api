@@ -912,6 +912,30 @@ export class FinanceController {
             shares.get(id)!.reduce((a, s) => a.add(s.amount), decimal(0)),
           ),
         })),
+      // Expenses of the business in general (no cycle): they lower the
+      // business result, not any cycle's.
+      businessExpenses: (() => {
+        const by = new Map<string, Prisma.Decimal>();
+        for (const l of all)
+          if (
+            !l.round &&
+            (l.source === "MANUAL" || l.source === "RECURRING") &&
+            l.status === "PAID" &&
+            l.kind === "EXPENSE" &&
+            l.category.inResult
+          )
+            by.set(
+              l.category.name,
+              (by.get(l.category.name) ?? decimal(0)).add(l.amount),
+            );
+        const items = [...by.entries()]
+          .map(([name, amount]) => ({ name, amount: money(amount) }))
+          .sort((a, b) => Number(b.amount) - Number(a.amount));
+        return {
+          total: money([...by.values()].reduce((a, v) => a.add(v), decimal(0))),
+          items,
+        };
+      })(),
     };
   }
 }
