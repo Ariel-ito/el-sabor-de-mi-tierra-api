@@ -18,6 +18,7 @@ import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import { cycleCosts, Lot } from "./costing";
 import { cycleShares, oldestFirst } from "./finance";
+import { ExtraUse, extraSuggestions, MIN_CYCLES } from "./extra";
 import { applyClosing, closingState } from "./closing";
 import { CloseRoundDto, RoundDto, RoundPatchDto } from "./dto";
 import { allocateStock, inventory, stockLock } from "./inventory";
@@ -257,6 +258,97 @@ export class RoundsController {
             costs.result === null
               ? null
               : money(decimal(costs.result).add(c.shipping).sub(spent)),
+        };
+      }),
+    };
+  }
+  // How much to buy on top of the encargos, per product, from what the last
+  // four cycles with orders before this one used beyond their encargos.
+  @Get("rounds/:id/extra") async extra(@Param("id", ParseUUIDPipe) id: string) {
+    const round = await this.db.round.findUnique({ where: { id } });
+    if (!round) throw new NotFoundException("Ciclo no encontrado.");
+    const earlier = await this.db.round.findMany({
+      where: {
+        opensAt: { lt: round.opensAt },
+        orders: { some: { cancelledAt: null } },
+      },
+      orderBy: { opensAt: "desc" },
+      take: 4,
+      select: { id: true, name: true },
+    });
+    const ids = earlier.map((r) => r.id);
+    const [orders, withdrawals, products] = await Promise.all([
+      this.db.order.findMany({
+        where: { roundId: { in: ids }, cancelledAt: null },
+        select: {
+          roundId: true,
+          kind: true,
+          items: { select: { productId: true, quantity: true, source: true } },
+        },
+      }),
+      this.db.stockWithdrawal.findMany({
+        where: {
+          reason: { in: ["LOSS", "SAMPLE", "PERSONAL"] },
+          receiptItem: {
+            purchaseItem: { purchase: { roundId: { in: ids } } },
+          },
+        },
+        select: {
+          reason: true,
+          quantity: true,
+          receiptItem: {
+            select: {
+              purchaseItem: {
+                select: {
+                  productId: true,
+                  purchase: { select: { roundId: true } },
+                },
+              },
+            },
+          },
+        },
+      }),
+      // Combos are assembled from their components, so they are left out.
+      this.db.product.findMany({
+        where: { active: true, components: { none: {} } },
+        include: { defaultSupplier: true },
+      }),
+    ]);
+    const uses: ExtraUse[] = [
+      ...orders.flatMap((o) =>
+        o.items
+          .filter((i) => o.kind === "DIRECT" || i.source === "STOCK")
+          .map((i) => ({
+            roundId: o.roundId,
+            productId: i.productId,
+            kind: (o.kind === "DIRECT" ? "sold" : "stock") as ExtraUse["kind"],
+            quantity: i.quantity,
+          })),
+      ),
+      ...withdrawals.map((w) => ({
+        roundId: w.receiptItem.purchaseItem.purchase.roundId,
+        productId: w.receiptItem.purchaseItem.productId,
+        kind: (
+          { LOSS: "loss", SAMPLE: "sample", PERSONAL: "personal" } as const
+        )[w.reason as "LOSS" | "SAMPLE" | "PERSONAL"],
+        quantity: w.quantity,
+      })),
+    ];
+    const rows = extraSuggestions(
+      [...ids].reverse(),
+      uses,
+      products.map((p) => ({ id: p.id, name: p.name, unit: p.unit })),
+    );
+    return {
+      // Oldest first, as the history of each product.
+      cycles: [...earlier].reverse(),
+      enough: earlier.length >= MIN_CYCLES,
+      products: rows.map((r) => {
+        const p = products.find((x) => x.id === r.productId)!;
+        return {
+          ...r,
+          supplierId: p.defaultSupplierId,
+          supplierName: p.defaultSupplier.name,
         };
       }),
     };

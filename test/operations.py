@@ -630,6 +630,31 @@ check(float(be['total'])>=500 and any(i['name']==equipo['name'] and float(i['amo
 good('PATCH',f"/finance/movements/{bags['id']}",{**mv(categoryId=emp['id'],roundId=rg[0]['id'],amount='100',spreadCycles=1,date=bagsAt),'id':bags['id'],'version':bags['version']})
 cs={x['id']:x for x in good('GET','/statistics')['cycles']}
 check([cs[r['id']]['expenses'] for r in rg]==['100.00','30.00','0.00'] and not sup(rg[2]),'changing how many cycles it lasts moves the parts')
+# Cuánto extra comprar: lo que usaron los ciclos anteriores fuera de encargos.
+sE=good('POST','/suppliers',{'name':'Prov extra '+u,'region':'Olancho'})
+pE=good('POST','/products',{'name':'Queso extra '+u,'salePrice':'60','estimatedCost':'40','defaultSupplierId':sE['id']})
+cE=good('POST','/customers',{'name':'Cliente extra '+u})
+tE=_dt.datetime(2033,1,1)+_dt.timedelta(minutes=int(u,16)%500000)
+re=[good('POST','/rounds',{'name':f'Extra {n} '+u,'opensAt':iso(tE+_dt.timedelta(days=n)),'closesAt':iso(tE+_dt.timedelta(days=n,hours=12))}) for n in range(4)]
+lE=lambda q:[{'productId':pE['id'],'quantity':q,'unitPrice':'60'}]
+def buy(r,q):
+    b=good('POST','/purchases',{'id':uid(),'roundId':r['id'],'supplierId':sE['id'],'orderedAt':'2026-10-20T10:00:00Z','items':[{'productId':pE['id'],'quantity':q,'quotedUnitCost':'40'}]})
+    good('POST',f"/purchases/{b['id']}/receipts",{'id':uid(),'version':b['version'],'receivedAt':'2026-10-20T12:00:00Z','invoice':'EXT '+uid()[:6],'globalDiscount':'0','items':[{'purchaseItemId':b['items'][0]['id'],'quantity':q,'unitCost':'40','unitDiscount':'0'}]})
+    return next(l for l in good('GET','/inventory') if l['productId']==pE['id'] and l['roundId']==r['id'])
+lot1=buy(re[0],'5')
+good('POST','/orders',{'roundId':re[0]['id'],'customerId':cE['id'],'items':[{'productId':pE['id'],'supplierId':sE['id'],'quantity':'2','unitPrice':'60'}]})
+good('POST','/sales',{'id':uid(),'roundId':re[0]['id'],'soldAt':'2026-10-21T10:00:00Z','items':lE('2')})
+good('POST','/inventory/withdrawals',{'id':uid(),'receiptItemId':lot1['id'],'quantity':'0.5','reason':'LOSS'})
+lot2=buy(re[1],'3')
+good('POST','/sales',{'id':uid(),'roundId':re[1]['id'],'soldAt':'2026-10-21T10:00:00Z','items':lE('1')})
+good('POST','/inventory/withdrawals',{'id':uid(),'receiptItemId':lot2['id'],'quantity':'0.5','reason':'SAMPLE'})
+good('POST','/orders',{'roundId':re[2]['id'],'customerId':cE['id'],'items':[{'productId':pE['id'],'supplierId':sE['id'],'quantity':'1','unitPrice':'60'}]})
+ex=good('GET',f"/rounds/{re[3]['id']}/extra")
+row=next(x for x in ex['products'] if x['productId']==pE['id'])
+check(ex['enough'] and [c['id'] for c in ex['cycles']][-3:]==[r['id'] for r in re[:3]],'the extra looks at the last cycles with orders before this one, oldest first')
+check([h['total'] for h in row['history']][-3:]==['2.5','1.5','0'] and row['history'][-2]['sold']=='1' and row['history'][-2]['sample']=='0.5','each earlier cycle says what it used beyond its encargos')
+check(row['average']=='1' and row['suggested']=='1' and row['supplierId']==sE['id'],'the suggested extra is the average, rounded up to half pounds')
+check(call('GET',f"/rounds/{uid()}/extra")[0]==404,'extra of an unknown cycle is 404')
 # Cambiar contraseña: cierra las otras sesiones.
 pw=os.environ['DAIRY_TEST_PASSWORD'];email=os.environ['DAIRY_TEST_EMAIL'];new=pw+'-nueva'
 other=good('POST','/auth/login',{'email':email,'password':pw})['accessToken']
