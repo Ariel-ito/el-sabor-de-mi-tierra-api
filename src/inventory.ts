@@ -111,6 +111,10 @@ export async function allocateStock(
         (expiredOn(a.receiptItem.expiresAt, date) ||
           a.receiptItem.receipt.receivedAt > date)
       ) {
+        await tx.orderItem.update({
+          where: { id: item.id },
+          data: { packedAt: null },
+        });
         if (a.delivered.isZero()) {
           await tx.stockAllocation.delete({ where: { id: a.id } });
           continue;
