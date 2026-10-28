@@ -13,10 +13,12 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "node:crypto";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db } from "./core";
 import {
   AccountMoveDto,
+  CustomerPaymentDto,
   ApplyCreditDto,
   OrderCreditDto,
   VoidPaymentDto,
@@ -29,6 +31,7 @@ import {
   orderInclude,
   serializeOrder,
 } from "./math";
+import { allocateCustomerPayment } from "./customer-payments";
 type Tx = Prisma.TransactionClient;
 const SIGN: Record<string, number> = {
   DEPOSIT: 1,
@@ -54,6 +57,137 @@ const notFuture = (date: string) => {
 @UseGuards(AuthGuard)
 export class AccountsController {
   constructor(@Inject(Db) private db: Db) {}
+  @Post("customers/:id/payments") async payCustomer(
+    @Param("id", ParseUUIDPipe) customerId: string,
+    @Body() body: CustomerPaymentDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
+      const notes = body.notes?.trim() || null;
+      const prior = await tx.customerPayment.findUnique({
+        where: { id: body.id },
+        include: { payments: true, excess: true },
+      });
+      if (prior) {
+        if (
+          prior.customerId !== customerId ||
+          !prior.amount.eq(body.amount) ||
+          prior.method !== body.method ||
+          prior.paidAt.getTime() !== new Date(body.paidAt).getTime() ||
+          prior.notes !== notes
+        )
+          throw new ConflictException(
+            "Este identificador ya corresponde a otro pago.",
+          );
+        return {
+          id: prior.id,
+          amount: money(prior.amount),
+          applied: money(
+            prior.payments.reduce((s, p) => s.add(p.amount), decimal(0)),
+          ),
+          excess: money(prior.excess?.amount ?? 0),
+        };
+      }
+      const customer = await tx.customer.findUnique({
+        where: { id: customerId },
+      });
+      if (!customer) throw new NotFoundException("Cliente no encontrado.");
+      if (customer.name === "Cliente de paso")
+        throw new BadRequestException(
+          "Asigna un cliente a la venta o cobra las ventas sin cliente por separado.",
+        );
+      notFuture(body.paidAt);
+      if (decimal(body.amount).lte(0))
+        throw new BadRequestException("El monto debe ser mayor que cero.");
+      const orders = await tx.order.findMany({
+        where: { customerId, cancelledAt: null },
+        include: orderInclude,
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+      });
+      const debts = orders
+        .map((o) => ({
+          id: o.id,
+          createdAt: o.createdAt,
+          version: o.version,
+          balance: money(orderBalance(o).balance),
+        }))
+        .filter((o) => decimal(o.balance).gt(0));
+      const expected = new Map(
+        body.expectedOrders.map((o) => [o.id, o.version]),
+      );
+      if (
+        expected.size !== body.expectedOrders.length ||
+        expected.size !== debts.length ||
+        debts.some((o) => expected.get(o.id) !== o.version)
+      )
+        throw new ConflictException(
+          "Los pendientes del cliente cambiaron. Actualiza el reparto antes de guardar.",
+        );
+      const plan = allocateCustomerPayment(body.amount, debts);
+      if (decimal(plan.excess).gt(0) && !body.excessToAccount)
+        throw new BadRequestException(
+          "El pago supera la deuda. Confirma que el excedente quede como saldo a favor.",
+        );
+      await tx.customerPayment.create({
+        data: {
+          id: body.id,
+          customerId,
+          amount: body.amount,
+          method: body.method,
+          paidAt: new Date(body.paidAt),
+          notes,
+        },
+      });
+      const payments = plan.payments.map((p) => ({
+        id: randomUUID(),
+        customerPaymentId: body.id,
+        orderId: p.orderId,
+        amount: p.amount,
+        method: body.method,
+        paidAt: new Date(body.paidAt),
+        notes: notes || "Pago general del cliente",
+      }));
+      if (payments.length) {
+        await tx.payment.createMany({ data: payments });
+        await tx.order.updateMany({
+          where: { id: { in: payments.map((p) => p.orderId) } },
+          data: { version: { increment: 1 } },
+        });
+      }
+      if (decimal(plan.excess).gt(0))
+        await tx.customerCredit.create({
+          data: {
+            id: randomUUID(),
+            customerPaymentId: body.id,
+            customerId,
+            kind: "DEPOSIT",
+            amount: plan.excess,
+            method: body.method,
+            date: new Date(body.paidAt),
+            notes: "Excedente de un pago general",
+          },
+        });
+      const result = { id: body.id, amount: money(body.amount), ...plan };
+      await audit(
+        tx,
+        req.actor.id,
+        "CustomerPayment",
+        body.id,
+        "CREATE",
+        null,
+        {
+          ...result,
+          customerId,
+          method: body.method,
+          paidAt: body.paidAt,
+          notes,
+          payments,
+        },
+      );
+      return result;
+    });
+  }
   // Who owes us, across every cycle, and who has money with us.
   @Get("collections") async collections() {
     const [orders, credits] = await Promise.all([

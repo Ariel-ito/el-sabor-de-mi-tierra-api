@@ -421,6 +421,29 @@ export class PaymentDto {
   @MaxLength(2000)
   notes?: string;
 }
+export class CustomerDebtVersionDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+}
+export class CustomerPaymentDto {
+  @IsUUID() id!: string;
+  @Matches(MONEY) amount!: string;
+  @IsIn(["CASH", "TRANSFER"]) method!: string;
+  @IsDateString({ strict: true }) paidAt!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  excessToAccount?: boolean;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(1000)
+  @ValidateNested({ each: true })
+  @Type(() => CustomerDebtVersionDto)
+  expectedOrders!: CustomerDebtVersionDto[];
+}
 // Fixing a cobro typed wrong.
 export class PaymentEditDto {
   @Matches(MONEY) amount!: string;

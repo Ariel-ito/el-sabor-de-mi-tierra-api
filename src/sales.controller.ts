@@ -177,6 +177,7 @@ export class SalesController {
           data: {
             id: body.id,
             kind: "DIRECT",
+            createdAt: soldAt,
             roundId,
             customerId: await walkInCustomer(tx, body.customerId),
             notes: body.notes,

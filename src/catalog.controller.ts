@@ -44,18 +44,29 @@ export class CatalogController {
     });
   }
   @Get("customers") async customers() {
-    const rows = await this.db.customer.findMany({
-      include: {
-        _count: {
-          select: { orders: { where: { cancelledAt: { not: null } } } },
+    const [rows, activity] = await Promise.all([
+      this.db.customer.findMany({
+        include: {
+          _count: {
+            select: { orders: { where: { cancelledAt: { not: null } } } },
+          },
         },
-      },
-      orderBy: { name: "asc" },
-    });
+        orderBy: { name: "asc" },
+      }),
+      this.db.order.groupBy({
+        by: ["customerId"],
+        where: { cancelledAt: null },
+        _max: { createdAt: true },
+      }),
+    ]);
+    const lastOrder = new Map(
+      activity.map((r) => [r.customerId, r._max.createdAt]),
+    );
     // How many encargos each customer cancelled, to keep it in mind.
     return rows.map(({ _count, ...c }) => ({
       ...c,
       cancelledOrders: _count.orders,
+      lastOrderAt: lastOrder.get(c.id) ?? null,
     }));
   }
   @Post("customers") createCustomer(@Body() body: CustomerDto) {
