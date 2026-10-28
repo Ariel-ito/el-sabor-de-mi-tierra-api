@@ -261,7 +261,12 @@ export class AccountsController {
       }));
     const sum = (k: "owed" | "account") =>
       money(list.reduce((s, r) => s.add(r[k]), decimal(0)));
-    return { customers: list, owed: sum("owed"), account: sum("account") };
+    return {
+      customers: list,
+      owed: sum("owed"),
+      account: sum("account"),
+      customerPayments: true,
+    };
   }
   // Everything about one customer at a glance: what they buy, what they
   // owe, money held for them and their latest encargos and sales.

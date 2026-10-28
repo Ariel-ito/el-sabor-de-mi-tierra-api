@@ -53,6 +53,7 @@ def snapshot(c=customer):
 def body(amount, c=customer):
     return {'id': uid(), 'amount': str(amount), 'method': 'TRANSFER', 'paidAt': iso(now), 'notes': 'Prueba FIFO '+tag, 'expectedOrders': snapshot(c)}
 path = '/customers/'+customer['id']+'/payments'
+check(good('GET', '/collections').get('customerPayments') is True, 'collections advertises the customer-payment capability for independent web deployment')
 first = body(1000)
 walkin = next((c for c in good('GET', '/customers') if c['name'] == 'Cliente de paso'), None)
 if not walkin: walkin = good('POST', '/customers', {'name': 'Cliente de paso'})
