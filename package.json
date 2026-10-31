@@ -14,7 +14,8 @@
     "test:integration": "python3 test/integration.py",
     "test:operations": "python3 test/operations.py",
     "test:repairs": "python3 test/repairs.py",
-    "test:customer-payments": "python3 test/customer-payments.py"
+    "test:customer-payments": "python3 test/customer-payments.py",
+    "test:packing": "python3 test/packing.py"
   },
   "engines": {
     "node": ">=20.19 <25"

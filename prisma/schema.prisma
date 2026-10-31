@@ -172,8 +172,8 @@ model OrderItem {
   // Pending pounds supplied from a later cycle; the sale stays in its own.
   fulfillRoundId    String?           @db.Uuid
   fulfillRound      Round?            @relation("CarriedItems", fields: [fulfillRoundId], references: [id])
-  // Put in the customer's bag; cleared when the encargo changes or the line
-  // is delivered only in part.
+  // Packed stock still awaiting delivery; delivery subtracts from it.
+  packedQuantity    Decimal           @default(0) @db.Decimal(12, 3)
   packedAt          DateTime?
 
   @@index([fulfillRoundId])
@@ -190,6 +190,7 @@ model AuditLog {
   createdAt  DateTime @default(now())
 
   @@index([entityId, createdAt])
+  @@index([entityId, action, createdAt])
 }
 
 model Purchase {

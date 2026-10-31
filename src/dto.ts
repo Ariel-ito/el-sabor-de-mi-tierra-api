@@ -462,6 +462,21 @@ export class PackingDto {
   items!: string[];
   @IsBoolean() packed!: boolean;
 }
+export class PackingQuantityItemDto {
+  @IsUUID() orderItemId!: string;
+  @IsString() @Matches(/^\d{1,9}(\.\d{1,3})?$/) quantity!: string;
+}
+export class PackingQuantitiesDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @IsIn(["PACK", "EDIT", "REVERT"]) mode!: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => PackingQuantityItemDto)
+  items!: PackingQuantityItemDto[];
+}
 export class OrderCancelDto {
   @IsInt() version!: number;
   @IsString() @Matches(/\S/) @MaxLength(500) reason!: string;

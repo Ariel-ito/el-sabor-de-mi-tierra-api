@@ -546,15 +546,15 @@ bp=good('POST','/purchases',{'id':uid(),'roundId':rP['id'],'supplierId':sP['id']
 good('POST',f"/purchases/{bp['id']}/receipts",{'id':uid(),'version':bp['version'],'receivedAt':'2026-10-12T10:00:00Z','invoice':'EMP '+u,'globalDiscount':'0','items':[{'purchaseItemId':bp['items'][0]['id'],'quantity':'6','unitCost':'40','unitDiscount':'0'}]})
 ln=op['items'][0]['id'];v0=op['version']
 op=good('POST',f"/orders/{op['id']}/packing",{'items':[ln],'packed':True})
-check(op['items'][0]['packedAt'] is not None and op['version']==v0,'packing marks a line without touching the version')
+check(op['items'][0]['packedAt'] is not None and op['version']==v0+1 and op['items'][0]['packedQuantity']=='3','packing records reserved quantities and updates the version')
 check(call('POST',f"/orders/{op['id']}/packing",{'items':[uid()],'packed':True})[0]==400,'packing only takes lines of that encargo')
 op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'notes':'Sin sal'})
 check(op['items'][0]['packedAt'] is not None,'a new note keeps the bag packed')
 op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'items':[{**lp,'id':ln,'quantity':'2'}]})
-check(op['items'][0]['packedAt'] is None,'changing a quantity unpacks the bag')
+check(op['items'][0]['packedAt'] is not None and op['items'][0]['packedQuantity']=='2','reducing quantity preserves packing up to the new pending amount')
 op=good('POST',f"/orders/{op['id']}/packing",{'items':[ln],'packed':True})
 op=good('POST',f"/orders/{op['id']}/deliveries",{'id':uid(),'version':op['version'],'deliveredAt':'2026-10-13T10:00:00Z','items':[{'orderItemId':ln,'quantity':'1'}]})
-check(op['items'][0]['packedAt'] is None and op['items'][0]['deliveredQuantity']=='1','a line delivered in part is packed again for the rest')
+check(op['items'][0]['packedQuantity']=='1' and op['items'][0]['deliveredQuantity']=='1','partial delivery preserves the packed remainder')
 op=good('PATCH',f"/orders/{op['id']}",{'version':op['version'],'partialOk':False})
 check(op['partialOk'] is False,'taking it in parts can be turned off')
 # Ventas apartadas: sin entregar ni cobrar todavía.

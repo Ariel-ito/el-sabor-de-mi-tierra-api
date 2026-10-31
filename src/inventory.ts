@@ -111,10 +111,17 @@ export async function allocateStock(
         (expiredOn(a.receiptItem.expiresAt, date) ||
           a.receiptItem.receipt.receivedAt > date)
       ) {
-        await tx.orderItem.update({
-          where: { id: item.id },
-          data: { packedAt: null },
-        });
+        if (item.packedQuantity.gt(0)) {
+          await tx.orderItem.update({
+            where: { id: item.id },
+            data: { packedAt: null, packedQuantity: 0 },
+          });
+          await tx.order.update({
+            where: { id: item.orderId },
+            data: { version: { increment: 1 } },
+          });
+          item.packedQuantity = decimal(0);
+        }
         if (a.delivered.isZero()) {
           await tx.stockAllocation.delete({ where: { id: a.id } });
           continue;
@@ -197,9 +204,12 @@ export async function releaseForEdit(
   tx: Prisma.TransactionClient,
   itemId: string,
   newQuantity: string,
+  preservePacked = false,
 ) {
+  const item = await tx.orderItem.findUniqueOrThrow({ where: { id: itemId } });
   const allocations = await tx.stockAllocation.findMany({
     where: { orderItemId: itemId },
+    orderBy: { receiptItem: { receipt: { receivedAt: "asc" } } },
   });
   const delivered = allocations.reduce(
     (s, a) => s.add(a.delivered),
@@ -207,16 +217,33 @@ export async function releaseForEdit(
   );
   if (delivered.gt(newQuantity))
     throw new BadRequestException("No puedes quitar cantidades ya entregadas.");
-  // Preserve consumed lot history; release only the unfulfilled portion.
+  const packed = preservePacked
+    ? Prisma.Decimal.min(
+        item.packedQuantity,
+        decimal(newQuantity).sub(delivered),
+      )
+    : decimal(0);
+  let keep = packed;
+  // Preserve stock already physically packed when the same product grows or shrinks.
   for (const a of allocations) {
-    if (a.delivered.isZero())
+    const held = Prisma.Decimal.min(keep, a.quantity.sub(a.delivered));
+    keep = keep.sub(held);
+    const quantity = a.delivered.add(held);
+    if (quantity.isZero())
       await tx.stockAllocation.delete({ where: { id: a.id } });
     else
       await tx.stockAllocation.update({
         where: { id: a.id },
-        data: { quantity: a.delivered },
+        data: { quantity },
       });
   }
+  await tx.orderItem.update({
+    where: { id: itemId },
+    data: {
+      packedQuantity: packed,
+      packedAt: packed.gt(0) ? item.packedAt : null,
+    },
+  });
 }
 // Marks reserved pounds as delivered, oldest receipt first, using only lots
 // received by the delivery time.
@@ -251,4 +278,15 @@ export async function consumeReserved(
     throw new BadRequestException(
       "No hay suficiente producto recibido, vigente y reservado para esta entrega. Revisa las recepciones y los vencimientos.",
     );
+  const item = await tx.orderItem.findUniqueOrThrow({
+    where: { id: orderItemId },
+  });
+  const packed = Prisma.Decimal.max(0, item.packedQuantity.sub(quantity));
+  await tx.orderItem.update({
+    where: { id: orderItemId },
+    data: {
+      packedQuantity: packed,
+      packedAt: packed.gt(0) ? item.packedAt : null,
+    },
+  });
 }

@@ -32,6 +32,7 @@ export function serializeOrder(order: any) {
     deliveredQuantity: (item.allocations || [])
       .reduce((s: Prisma.Decimal, a: any) => s.add(a.delivered), decimal(0))
       .toString(),
+    packedQuantity: decimal(item.packedQuantity ?? 0).toString(),
     quantity: item.quantity.toString(),
     unitPrice: money(item.unitPrice),
     totalAmount: item.totalAmount == null ? null : money(item.totalAmount),
@@ -58,6 +59,7 @@ export function serializeOrder(order: any) {
   );
   return {
     ...order,
+    packingQuantities: true,
     paid: money(paid),
     balance: money(balance),
     credit: money(credit),
