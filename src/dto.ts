@@ -314,6 +314,9 @@ export class SaleLineDto {
 export class SalePaymentDto {
   @Matches(MONEY) amount!: string;
   @IsIn(["CASH", "TRANSFER"]) method!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["TIP", "CREDIT", "CHANGE"])
+  excessDisposition?: "TIP" | "CREDIT" | "CHANGE";
 }
 export class SaleDto {
   @IsUUID() id!: string;
@@ -414,6 +417,9 @@ export class PaymentDto {
   @ValidateIf((_o, v) => v !== undefined)
   @IsBoolean()
   excessToAccount?: boolean;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["TIP", "CREDIT", "CHANGE"])
+  excessDisposition?: "TIP" | "CREDIT" | "CHANGE";
   @IsIn(["CASH", "TRANSFER"]) method!: string;
   @IsDateString({ strict: true }) paidAt!: string;
   @ValidateIf((_o, v) => v !== undefined)
@@ -437,6 +443,9 @@ export class CustomerPaymentDto {
   @ValidateIf((_o, v) => v !== undefined)
   @IsBoolean()
   excessToAccount?: boolean;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["TIP", "CREDIT", "CHANGE"])
+  excessDisposition?: "TIP" | "CREDIT" | "CHANGE";
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(1000)

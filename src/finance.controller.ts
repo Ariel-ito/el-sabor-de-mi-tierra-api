@@ -41,9 +41,11 @@ import {
   summarizePeriod,
 } from "./finance";
 import { decimal, money } from "./math";
+import { orderBalance, orderInclude } from "./math";
+import { inventory } from "./inventory";
 type Tx = Prisma.TransactionClient;
 // Categories the ledger fills by itself from cobros and facturas.
-const AUTOMATIC = ["SALE", "PRODUCT_PURCHASE"];
+const AUTOMATIC = ["SALE", "PRODUCT_PURCHASE", "TIPS"];
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const currentMonth = () =>
   new Date(Date.now() - 6 * 3600000).toISOString().slice(0, 7);
@@ -63,7 +65,7 @@ type MovementRow = Prisma.FinanceMovementGetPayload<{
 // Ledger line shared by typed-in movements and those derived from operations.
 type Line = {
   id: string;
-  source: "MANUAL" | "RECURRING" | "INVOICE" | "PAYMENT" | "ACCOUNT";
+  source: "MANUAL" | "RECURRING" | "INVOICE" | "PAYMENT" | "ACCOUNT" | "TIP";
   kind: "INCOME" | "EXPENSE";
   status: string;
   date: Date;
@@ -87,6 +89,10 @@ type Line = {
   version: number | null;
   // Cobros: their encargo or sale, to fix or void them from Contabilidad.
   orderId?: string;
+  customerId?: string;
+  customerPaymentId?: string | null;
+  receivedAmount?: string | null;
+  excessDisposition?: string | null;
   notes?: string | null;
 };
 const fromMovement = (m: MovementRow): Line => ({
@@ -160,47 +166,72 @@ export class FinanceController {
     return tx.financeCategory.findUniqueOrThrow({ where: { systemKey } });
   }
   // Every ledger line, optionally limited to a date range or a cycle.
-  private async lines(range?: { start: Date; end: Date }, roundId?: string) {
+  private async lines(
+    range?: { start: Date; end: Date },
+    roundId?: string,
+    db: Tx | Db = this.db,
+  ) {
     const date = range ? { gte: range.start, lt: range.end } : undefined;
-    const [movements, receipts, payments, sale, purchase, account] =
-      await Promise.all([
-        this.db.financeMovement.findMany({
-          where: { ...(date ? { date } : {}), ...(roundId ? { roundId } : {}) },
-          include: movementInclude,
-        }),
-        this.db.receipt.findMany({
-          where: {
-            // Assembled combos reuse stock already paid for.
-            purchase: { kind: "PURCHASE", ...(roundId ? { roundId } : {}) },
-            ...(date ? { receivedAt: date } : {}),
-          },
-          include: {
-            purchase: { include: { supplier: true, round: true } },
-          },
-        }),
-        this.db.payment.findMany({
-          where: {
-            voidedAt: null,
-            // Paid from account credit: that money entered as a deposit.
-            method: { not: "CREDIT" },
-            ...(date ? { paidAt: date } : {}),
-            ...(roundId ? { order: { roundId } } : {}),
-          },
-          include: { order: { include: { customer: true, round: true } } },
-        }),
-        this.systemCategory(this.db, "SALE"),
-        this.systemCategory(this.db, "PRODUCT_PURCHASE"),
-        // Advances received and refunds given from customers' accounts.
-        this.db.customerCredit.findMany({
-          where: {
-            voidedAt: null,
-            kind: { in: ["DEPOSIT", "REFUND"] },
-            ...(date ? { date } : {}),
-            ...(roundId ? { order: { roundId } } : {}),
-          },
-          include: { customer: true, order: { include: { round: true } } },
-        }),
-      ]);
+    const [
+      movements,
+      receipts,
+      payments,
+      sale,
+      purchase,
+      account,
+      tipsCategory,
+      tipReceipts,
+    ] = await Promise.all([
+      db.financeMovement.findMany({
+        where: { ...(date ? { date } : {}), ...(roundId ? { roundId } : {}) },
+        include: movementInclude,
+      }),
+      db.receipt.findMany({
+        where: {
+          // Assembled combos reuse stock already paid for.
+          purchase: { kind: "PURCHASE", ...(roundId ? { roundId } : {}) },
+          ...(date ? { receivedAt: date } : {}),
+        },
+        include: {
+          purchase: { include: { supplier: true, round: true } },
+        },
+      }),
+      db.payment.findMany({
+        where: {
+          voidedAt: null,
+          // Paid from account credit: that money entered as a deposit.
+          method: { not: "CREDIT" },
+          ...(date ? { paidAt: date } : {}),
+          ...(roundId ? { order: { roundId } } : {}),
+        },
+        include: {
+          order: { include: { customer: true, round: true } },
+          customerPayment: { select: { amount: true } },
+        },
+      }),
+      this.systemCategory(db, "SALE"),
+      this.systemCategory(db, "PRODUCT_PURCHASE"),
+      // Advances received and refunds given from customers' accounts.
+      db.customerCredit.findMany({
+        where: {
+          voidedAt: null,
+          kind: { in: ["DEPOSIT", "REFUND"] },
+          ...(date ? { date } : {}),
+          ...(roundId ? { order: { roundId } } : {}),
+        },
+        include: { customer: true, order: { include: { round: true } } },
+      }),
+      this.systemCategory(db, "TIPS"),
+      db.customerPayment.findMany({
+        where: {
+          voidedAt: null,
+          tipAmount: { gt: 0 },
+          ...(date ? { paidAt: date } : {}),
+          ...(roundId ? { tipRoundId: roundId } : {}),
+        },
+        include: { customer: true, tipRound: true },
+      }),
+    ]);
     const auto = {
       status: "PAID",
       paidBy: "BUSINESS",
@@ -236,8 +267,46 @@ export class FinanceController {
         description: `${p.order.kind === "DIRECT" ? "Venta" : "Cobro"} · ${p.order.customer.name}`,
         method: p.method,
         orderId: p.orderId,
+        customerId: p.order.customerId,
+        customerPaymentId: p.customerPaymentId,
+        receivedAmount: p.customerPayment
+          ? money(p.customerPayment.amount)
+          : p.receivedAmount
+            ? money(p.receivedAmount)
+            : null,
+        excessDisposition: p.excessDisposition,
         notes: p.notes,
         round: { id: p.order.round.id, name: p.order.round.name },
+      })),
+      ...payments
+        .filter((p) => p.tipAmount.gt(0))
+        .map((p): Line => ({
+          ...auto,
+          id: `tip:${p.id}`,
+          source: "TIP",
+          kind: "INCOME",
+          date: p.paidAt,
+          amount: money(p.tipAmount),
+          category: tipsCategory,
+          description: `Propina · ${p.order.customer.name}`,
+          method: p.method,
+          orderId: p.orderId,
+          customerId: p.order.customerId,
+          round: { id: p.order.round.id, name: p.order.round.name },
+        })),
+      ...tipReceipts.map((p): Line => ({
+        ...auto,
+        id: `tip:${p.id}`,
+        source: "TIP",
+        kind: "INCOME",
+        date: p.paidAt,
+        amount: money(p.tipAmount),
+        category: tipsCategory,
+        description: `Propina · ${p.customer.name}`,
+        method: p.method,
+        customerId: p.customerId,
+        customerPaymentId: p.id,
+        round: p.tipRound ? { id: p.tipRound.id, name: p.tipRound.name } : null,
       })),
       ...account.map((e): Line => ({
         ...auto,
@@ -844,6 +913,62 @@ export class FinanceController {
     const selected = validMonth(month);
     const all = await this.lines();
     const allTime = summarize(all.map(toEntry));
+    const position = await this.db.$transaction(
+      async (tx) => {
+        const asOf = new Date();
+        const current = summarize(
+          (await this.lines(undefined, undefined, tx))
+            .filter((l) => l.date <= asOf)
+            .map(toEntry),
+        );
+        const orders = await tx.order.findMany({
+          where: { cancelledAt: null },
+          include: orderInclude,
+        });
+        const credits = await tx.customerCredit.findMany({
+          where: { voidedAt: null },
+        });
+        const balances = orders.map(orderBalance);
+        const customerCredit = credits
+          .reduce(
+            (s, e) =>
+              s.add(
+                decimal(e.amount).mul(
+                  ["DEPOSIT", "OVERPAY"].includes(e.kind) ? 1 : -1,
+                ),
+              ),
+            decimal(0),
+          )
+          .add(balances.reduce((s, b) => s.add(b.credit), decimal(0)));
+        const lots = await inventory(tx, asOf);
+        return {
+          asOf,
+          cash: current.cashExpected,
+          receivables: money(
+            balances.reduce((s, b) => s.add(b.balance), decimal(0)),
+          ),
+          customerCredit: money(customerCredit),
+          inventoryValue: money(
+            lots
+              .filter(
+                (l) =>
+                  l.expiryStatus !== "EXPIRED" &&
+                  new Date(l.receivedAt) <= asOf,
+              )
+              .reduce(
+                (s, l) => s.add(decimal(l.onHand).mul(l.unitCost)),
+                decimal(0),
+              ),
+          ),
+          owedToOwners: current.owedToOwnersTotal,
+          pendingRecurring: allTime.pendingRecurring,
+        };
+      },
+      {
+        timeout: 15000,
+        isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+      },
+    );
     const { start, end } = monthRange(selected);
     const entries = all.map(toEntry);
     // Six months ending at the selected one, for the trend.
@@ -886,6 +1011,7 @@ export class FinanceController {
       month: selected,
       monthly: summarizePeriod(entries, { start, end }),
       allTime,
+      position,
       months,
       owners: OWNERS.map((o) => {
         const distributed = all

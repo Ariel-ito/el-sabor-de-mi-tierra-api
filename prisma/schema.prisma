@@ -103,6 +103,7 @@ model Round {
   orders           Order[]
   financeMovements FinanceMovement[]
   carriedItems     OrderItem[]       @relation("CarriedItems")
+  customerTips     CustomerPayment[] @relation("CustomerTipRound")
   notices          CustomerNotice[]
 }
 
@@ -286,6 +287,10 @@ model Payment {
   orderId           String           @db.Uuid
   order             Order            @relation(fields: [orderId], references: [id])
   amount            Decimal          @db.Decimal(12, 2)
+  receivedAmount    Decimal?         @db.Decimal(12, 2)
+  tipAmount         Decimal          @default(0) @db.Decimal(12, 2)
+  changeAmount      Decimal          @default(0) @db.Decimal(12, 2)
+  excessDisposition String?
   method            String
   paidAt            DateTime
   notes             String?
@@ -303,18 +308,26 @@ model Payment {
 // One receipt from a customer, allocated atomically to their oldest debts.
 // The individual payments remain the source of order balances and reports.
 model CustomerPayment {
-  id         String          @id @db.Uuid
-  customerId String          @db.Uuid
-  customer   Customer        @relation(fields: [customerId], references: [id])
-  amount     Decimal         @db.Decimal(12, 2)
-  method     String
-  paidAt     DateTime
-  notes      String?
-  createdAt  DateTime        @default(now())
-  payments   Payment[]
-  excess     CustomerCredit?
+  id                String          @id @db.Uuid
+  customerId        String          @db.Uuid
+  customer          Customer        @relation(fields: [customerId], references: [id])
+  amount            Decimal         @db.Decimal(12, 2)
+  tipAmount         Decimal         @default(0) @db.Decimal(12, 2)
+  changeAmount      Decimal         @default(0) @db.Decimal(12, 2)
+  excessDisposition String?
+  tipRoundId        String?         @db.Uuid
+  tipRound          Round?          @relation("CustomerTipRound", fields: [tipRoundId], references: [id], onDelete: Restrict)
+  voidedAt          DateTime?
+  voidReason        String?
+  method            String
+  paidAt            DateTime
+  notes             String?
+  createdAt         DateTime        @default(now())
+  payments          Payment[]
+  excess            CustomerCredit?
 
   @@index([customerId, paidAt])
+  @@index([tipRoundId])
 }
 
 model Delivery {

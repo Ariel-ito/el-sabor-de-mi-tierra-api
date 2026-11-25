@@ -85,6 +85,7 @@ receipt(p1,s1,1)
 o=get()
 good('POST',path+'/deliveries',{'id':uid(),'version':o['version'],'deliveredAt':iso(now+timedelta(minutes=1)),'items':[{'orderItemId':line(p1,o)['id'],'quantity':'1'}]})
 check(line(p1)['packedQuantity']=='1' and line(p1)['deliveredQuantity']=='1' and line(p2)['packedQuantity']=='20','partial delivery subtracts only delivered packing and preserves the other product')
+check(line(p1)['totalPackedQuantity']=='2','manual packing followed by delivery is counted once in the total')
 # A failure in the second line rolls back the first line too.
 b=body(p1,2);b['items'].append({'orderItemId':uid(),'quantity':'1'})
 check(call('POST',path+'/packing/quantities',b)[0]==400 and line(p1)['packedQuantity']=='1','invalid multi-line confirmation is atomic')
@@ -92,6 +93,7 @@ revert={'id':uid(),'version':get()['version'],'mode':'REVERT','items':[{'orderIt
 reserved=[i['reservedQuantity'] for i in get()['items']]
 o=good('POST',path+'/packing/quantities',revert)
 check(all(i['packedQuantity']=='0' for i in o['items']) and [i['reservedQuantity'] for i in o['items']]==reserved,'reversal frees packing marks without releasing customer reservations')
+check(line(p1,o)['totalPackedQuantity']=='1','reversing pending packing preserves delivered preparation')
 h=good('GET',path+'/packing')
 check(h[0]['mode']=='REVERT' and h[0]['actor'] and len(h[0]['changes'])==2,'history records author, time and exact changes')
 # Older deployed clients continue to work with quantity-safe operations.
@@ -107,4 +109,24 @@ good('PATCH',path,{'version':o['version'],'items':[{'id':i['id'],'productId':i['
 check(line(p1)['packedQuantity']=='2' and line(p3)['packedQuantity']=='0','adding a product preserves existing packing and leaves the new product unpacked')
 # Leave a useful mobile QA case: half of the remaining dairy packed; bakery ready.
 pack(p1,'0.5','EDIT')
-print(json.dumps({'checks':len(checks),'tag':tag,'roundId':r['id'],'round':r['name'],'customer':c['name'],'orderId':o['id'],'supplierId':s1['id']},ensure_ascii=False))
+# Delivery without manual packing is confirmed preparation, including retries.
+receipt(p3,s1,'2.5')
+auto=new_order([(p3,s1,1)])
+delivery={'id':uid(),'version':auto['version'],'deliveredAt':iso(now+timedelta(minutes=2)),'items':[{'orderItemId':auto['items'][0]['id'],'quantity':'0.5'}]}
+auto=good('POST','/orders/'+auto['id']+'/deliveries',delivery)
+check(auto['items'][0]['packedQuantity']=='0' and auto['items'][0]['totalPackedQuantity']=='0.5','delivery automatically confirms packing without a manual step')
+retry=good('POST','/orders/'+auto['id']+'/deliveries',delivery)
+check(retry['items'][0]['totalPackedQuantity']=='0.5','retrying delivery cannot duplicate packing consumption')
+auto=good('POST','/orders/'+auto['id']+'/deliveries',{'id':uid(),'version':auto['version'],'deliveredAt':iso(now+timedelta(minutes=2)),'items':[{'orderItemId':auto['items'][0]['id'],'quantity':'0.5'}]})
+check(auto['deliveryStatus']=='DELIVERED' and auto['items'][0]['totalPackedQuantity']=='1','fully delivered encargo is fully packed with no pending manual quantity')
+sale=good('POST','/sales',{'id':uid(),'roundId':r['id'],'customerId':c['id'],'soldAt':iso(now+timedelta(minutes=2)),'items':[{'productId':p3['id'],'quantity':'0.5','unitPrice':'70'}]})
+check(sale['items'][0]['totalPackedQuantity']=='0.5','immediately delivered sales also count as packed')
+p4=good('POST','/products',{'name':'Quesillo límite '+tag,'unit':'lb','salePrice':'70','estimatedCost':'50','defaultSupplierId':s1['id']})
+receipt(p4,s1,2)
+new_order([(p4,s1,1)])
+lot=next(l for l in good('GET','/inventory') if l['productId']==p4['id'])
+check(lot['onHand']=='2' and lot['reserved']=='1' and lot['available']=='1','withdrawal fixture separates reserved and free stock')
+check(call('POST','/inventory/withdrawals',{'id':uid(),'receiptItemId':lot['id'],'quantity':'10','reason':'SAMPLE'})[0]==400,'backend rejects withdrawal above the free amount')
+lot=next(l for l in good('GET','/inventory') if l['id']==lot['id'])
+check(lot['available']=='1' and lot['onHand']=='2','rejected withdrawal does not change stock')
+print(json.dumps({'checks':len(checks),'tag':tag,'roundId':r['id'],'round':r['name'],'customer':c['name'],'orderId':o['id'],'deliveredOrderId':auto['id'],'supplierId':s1['id'],'withdrawProduct':p4['name']},ensure_ascii=False))

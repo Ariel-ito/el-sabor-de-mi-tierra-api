@@ -1,5 +1,7 @@
 import { assertQuantity } from "./units";
 import { randomUUID } from "node:crypto";
+import { settlePayment } from "./settlement";
+import { accountBalance } from "./accounts.controller";
 import {
   BadRequestException,
   Body,
@@ -513,6 +515,23 @@ export class OrdersController {
       if (prior) {
         if (prior.orderId !== id)
           throw new ConflictException("Identificador ya utilizado");
+        if (
+          prior.receivedAmount &&
+          (!prior.receivedAmount.eq(body.amount) ||
+            prior.method !== body.method ||
+            prior.paidAt.getTime() !== new Date(body.paidAt).getTime() ||
+            (prior.excessDisposition &&
+              prior.excessDisposition !==
+                (body.excessDisposition ??
+                  (body.excessToAccount ? "CREDIT" : null))))
+        )
+          throw new ConflictException(
+            "Este identificador corresponde a otro cobro.",
+          );
+        if (prior.voidedAt)
+          throw new ConflictException(
+            "Este cobro fue anulado. Registra uno nuevo.",
+          );
         return serializeOrder(order);
       }
       if (order.version !== body.version)
@@ -520,36 +539,47 @@ export class OrdersController {
           "El encargo cambió. Actualiza antes de registrar el pago.",
         );
       const view = serializeOrder(order);
-      const excess = decimal(body.amount).sub(view.balance);
+      const settlement = settlePayment(
+        body.amount,
+        view.balance,
+        body.excessDisposition,
+        body.excessToAccount,
+      );
       if (
-        decimal(body.amount).lte(0) ||
-        decimal(view.balance).lte(0) ||
-        (excess.gt(0) && !body.excessToAccount)
+        order.customer.name === "Cliente de paso" &&
+        decimal(settlement.creditAmount).gt(0)
       )
         throw new BadRequestException(
-          "El abono debe ser mayor a cero y no superar el saldo pendiente.",
+          "Asigna un cliente para guardar saldo a favor.",
         );
       if (new Date(body.paidAt) > new Date())
         throw new BadRequestException("La fecha de pago no puede ser futura.");
-      const { version, excessToAccount, ...data } = body;
       const payment = await tx.payment.create({
         data: {
-          ...data,
-          amount: excess.gt(0) ? view.balance : data.amount,
+          id: body.id,
+          amount: settlement.amount,
+          receivedAmount: settlement.receivedAmount,
+          tipAmount: settlement.tipAmount,
+          changeAmount: settlement.changeAmount,
+          excessDisposition: settlement.excessDisposition,
+          method: body.method,
+          paidAt: new Date(body.paidAt),
+          notes: body.notes,
           orderId: id,
         },
       });
-      if (excess.gt(0))
+      if (decimal(settlement.creditAmount).gt(0))
         await tx.customerCredit.create({
           data: {
             id: randomUUID(),
             customerId: order.customerId,
             kind: "DEPOSIT",
-            amount: excess,
+            amount: settlement.creditAmount,
             method: body.method,
             date: new Date(body.paidAt),
             notes: "Excedente de un abono",
             orderId: id,
+            paymentId: payment.id,
           },
         });
       await tx.order.update({
@@ -588,6 +618,14 @@ export class OrdersController {
         throw new NotFoundException("Pago no encontrado.");
       if (before.voidedAt)
         throw new ConflictException("Este pago ya fue anulado.");
+      if (before.customerPaymentId)
+        throw new BadRequestException(
+          "Es parte de un pago general. Anula y registra el cobro completo desde la cuenta del cliente.",
+        );
+      if (before.excessDisposition)
+        throw new BadRequestException(
+          "Este cobro tiene un sobrante registrado. Anúlalo y regístralo de nuevo para corregir el desglose.",
+        );
       if (before.method === "CREDIT")
         throw new BadRequestException(
           "Este pago se hizo con saldo a favor; anúlalo y regístralo de nuevo.",
@@ -621,6 +659,7 @@ export class OrdersController {
         where: { id: paymentId },
         data: {
           amount,
+          receivedAmount: before.receivedAmount ? amount : null,
           method: body.method,
           paidAt: new Date(body.paidAt),
           notes: body.notes?.trim() || null,
@@ -660,6 +699,10 @@ export class OrdersController {
       });
       if (before.orderId !== id)
         throw new BadRequestException("El pago no pertenece a este encargo.");
+      if (before.customerPaymentId)
+        throw new BadRequestException(
+          "Es parte de un pago general. Anula el cobro completo desde la cuenta del cliente.",
+        );
       if (
         !before.voidedAt &&
         (await tx.customerCredit.count({
@@ -670,6 +713,17 @@ export class OrdersController {
           "Parte de lo pagado se pasó a la cuenta del cliente; anula eso primero.",
         );
       if (!before.voidedAt) {
+        const deposit = await tx.customerCredit.findFirst({
+          where: { paymentId, kind: "DEPOSIT", voidedAt: null },
+        });
+        const order = await tx.order.findUniqueOrThrow({ where: { id } });
+        if (
+          deposit &&
+          deposit.amount.gt(await accountBalance(tx, order.customerId))
+        )
+          throw new ConflictException(
+            "El saldo a favor de este cobro ya se usó; anula primero los pagos hechos con él.",
+          );
         // A payment made with account credit gives that credit back.
         await tx.customerCredit.updateMany({
           where: { paymentId, voidedAt: null },

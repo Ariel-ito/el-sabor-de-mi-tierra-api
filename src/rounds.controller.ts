@@ -17,6 +17,7 @@ import { Prisma } from "@prisma/client";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
 import { cycleCosts, Lot } from "./costing";
+import { productPrices } from "./price-trends";
 import { cycleShares, oldestFirst } from "./finance";
 import { ExtraUse, extraSuggestions, MIN_CYCLES } from "./extra";
 import { applyClosing, closingState } from "./closing";
@@ -109,42 +110,51 @@ export class RoundsController {
     );
   }
   @Get("statistics") async stats() {
-    const [rounds, orders, receipts, expenses] = await this.db.$transaction([
-      this.db.round.findMany({ orderBy: { opensAt: "desc" } }),
-      this.db.order.findMany({
-        include: {
-          ...orderInclude,
-          items: {
-            include: {
-              product: { include: { category: true } },
-              supplier: true,
-              allocations: { include: { receiptItem: true } },
+    const [rounds, orders, receipts, expenses, paymentTips, customerTips] =
+      await this.db.$transaction([
+        this.db.round.findMany({ orderBy: { opensAt: "desc" } }),
+        this.db.order.findMany({
+          include: {
+            ...orderInclude,
+            items: {
+              include: {
+                product: { include: { category: true } },
+                supplier: true,
+                allocations: { include: { receiptItem: true } },
+              },
             },
           },
-        },
-      }),
-      this.db.receiptItem.findMany({
-        include: {
-          purchaseItem: {
-            include: {
-              purchase: true,
-              product: { include: { category: true } },
+        }),
+        this.db.receiptItem.findMany({
+          include: {
+            purchaseItem: {
+              include: {
+                purchase: { include: { supplier: true } },
+                product: { include: { category: true } },
+              },
             },
+            allocations: true,
+            withdrawals: true,
+            receipt: true,
           },
-          allocations: true,
-          withdrawals: true,
-        },
-      }),
-      this.db.financeMovement.findMany({
-        where: {
-          roundId: { not: null },
-          kind: "EXPENSE",
-          status: "PAID",
-          category: { inResult: true },
-        },
-        include: { category: true },
-      }),
-    ]);
+        }),
+        this.db.financeMovement.findMany({
+          where: {
+            roundId: { not: null },
+            kind: "EXPENSE",
+            status: "PAID",
+            category: { inResult: true },
+          },
+          include: { category: true },
+        }),
+        this.db.payment.findMany({
+          where: { voidedAt: null, tipAmount: { gt: 0 } },
+          include: { order: { select: { roundId: true } } },
+        }),
+        this.db.customerPayment.findMany({
+          where: { voidedAt: null, tipAmount: { gt: 0 } },
+        }),
+      ]);
     const lots: Lot[] = receipts.map((r) => ({
       productId: r.purchaseItem.productId,
       supplierId: r.purchaseItem.purchase.supplierId,
@@ -160,9 +170,19 @@ export class RoundsController {
         .sub(r.withdrawals.reduce((a, x) => a.add(x.quantity), decimal(0))),
     }));
     const result = statistics(rounds, orders);
+    const tips = (roundId?: string) =>
+      paymentTips
+        .filter((p) => !roundId || p.order.roundId === roundId)
+        .reduce((s, p) => s.add(p.tipAmount), decimal(0))
+        .add(
+          customerTips
+            .filter((p) => !roundId || p.tipRoundId === roundId)
+            .reduce((s, p) => s.add(p.tipAmount), decimal(0)),
+        );
     const shares = cycleShares(oldestFirst(rounds), expenses);
     return {
       ...result,
+      overall: { ...result.overall, tips: money(tips()) },
       cycles: result.cycles.map((c) => {
         const costs = cycleCosts(
           c.id,
@@ -219,7 +239,9 @@ export class RoundsController {
         }
         return {
           ...c,
+          tips: money(tips(c.id)),
           ...costs,
+          productPrices: productPrices(c.id, orders, receipts),
           status: rounds.find((r) => r.id === c.id)?.status,
           undelivered,
           purchases: money(purchases),

@@ -32,6 +32,7 @@ import {
   serializeOrder,
 } from "./math";
 import { allocateCustomerPayment } from "./customer-payments";
+import { settlePayment } from "./settlement";
 type Tx = Prisma.TransactionClient;
 const SIGN: Record<string, number> = {
   DEPOSIT: 1,
@@ -57,6 +58,9 @@ const notFuture = (date: string) => {
 @UseGuards(AuthGuard)
 export class AccountsController {
   constructor(@Inject(Db) private db: Db) {}
+  @Get("payment-options") paymentOptions() {
+    return { paymentSettlements: true };
+  }
   @Post("customers/:id/payments") async payCustomer(
     @Param("id", ParseUUIDPipe) customerId: string,
     @Body() body: CustomerPaymentDto,
@@ -75,10 +79,18 @@ export class AccountsController {
           !prior.amount.eq(body.amount) ||
           prior.method !== body.method ||
           prior.paidAt.getTime() !== new Date(body.paidAt).getTime() ||
-          prior.notes !== notes
+          prior.notes !== notes ||
+          ((prior.excessDisposition || prior.excess) &&
+            (prior.excessDisposition ?? "CREDIT") !==
+              (body.excessDisposition ??
+                (body.excessToAccount ? "CREDIT" : null)))
         )
           throw new ConflictException(
             "Este identificador ya corresponde a otro pago.",
+          );
+        if (prior.voidedAt)
+          throw new ConflictException(
+            "Este cobro fue anulado. Registra uno nuevo.",
           );
         return {
           id: prior.id,
@@ -87,6 +99,8 @@ export class AccountsController {
             prior.payments.reduce((s, p) => s.add(p.amount), decimal(0)),
           ),
           excess: money(prior.excess?.amount ?? 0),
+          tipAmount: money(prior.tipAmount),
+          changeAmount: money(prior.changeAmount),
         };
       }
       const customer = await tx.customer.findUnique({
@@ -125,10 +139,12 @@ export class AccountsController {
           "Los pendientes del cliente cambiaron. Actualiza el reparto antes de guardar.",
         );
       const plan = allocateCustomerPayment(body.amount, debts);
-      if (decimal(plan.excess).gt(0) && !body.excessToAccount)
-        throw new BadRequestException(
-          "El pago supera la deuda. Confirma que el excedente quede como saldo a favor.",
-        );
+      const settlement = settlePayment(
+        body.amount,
+        debts.reduce((s, d) => s.add(d.balance), decimal(0)).toString(),
+        body.excessDisposition,
+        body.excessToAccount,
+      );
       await tx.customerPayment.create({
         data: {
           id: body.id,
@@ -137,6 +153,13 @@ export class AccountsController {
           method: body.method,
           paidAt: new Date(body.paidAt),
           notes,
+          tipAmount: settlement.tipAmount,
+          changeAmount: settlement.changeAmount,
+          excessDisposition: settlement.excessDisposition,
+          tipRoundId: decimal(settlement.tipAmount).gt(0)
+            ? orders.find((o) => o.id === plan.payments.at(-1)?.orderId)!
+                .roundId
+            : null,
         },
       });
       const payments = plan.payments.map((p) => ({
@@ -155,20 +178,27 @@ export class AccountsController {
           data: { version: { increment: 1 } },
         });
       }
-      if (decimal(plan.excess).gt(0))
+      if (decimal(settlement.creditAmount).gt(0))
         await tx.customerCredit.create({
           data: {
             id: randomUUID(),
             customerPaymentId: body.id,
             customerId,
             kind: "DEPOSIT",
-            amount: plan.excess,
+            amount: settlement.creditAmount,
             method: body.method,
             date: new Date(body.paidAt),
             notes: "Excedente de un pago general",
           },
         });
-      const result = { id: body.id, amount: money(body.amount), ...plan };
+      const result = {
+        id: body.id,
+        amount: money(body.amount),
+        ...plan,
+        excess: settlement.creditAmount,
+        tipAmount: settlement.tipAmount,
+        changeAmount: settlement.changeAmount,
+      };
       await audit(
         tx,
         req.actor.id,
@@ -186,6 +216,101 @@ export class AccountsController {
         },
       );
       return result;
+    });
+  }
+  @Get("customers/:id/payments") async receipts(
+    @Param("id", ParseUUIDPipe) customerId: string,
+  ) {
+    const rows = await this.db.customerPayment.findMany({
+      where: { customerId },
+      include: {
+        payments: { include: { order: { include: { round: true } } } },
+        excess: true,
+        tipRound: true,
+      },
+      orderBy: [{ paidAt: "desc" }, { id: "desc" }],
+    });
+    return rows.map((r) => ({
+      ...r,
+      amount: money(r.amount),
+      applied: money(
+        r.payments
+          .filter((p) => !p.voidedAt)
+          .reduce((s, p) => s.add(p.amount), decimal(0)),
+      ),
+      tipAmount: money(r.tipAmount),
+      changeAmount: money(r.changeAmount),
+      creditAmount: money(r.excess && !r.excess.voidedAt ? r.excess.amount : 0),
+      payments: r.payments.map((p) => ({
+        id: p.id,
+        orderId: p.orderId,
+        amount: money(p.amount),
+        roundName: p.order.round.name,
+      })),
+    }));
+  }
+  @Post("customers/:id/payments/:receiptId/void") async voidReceipt(
+    @Param("id", ParseUUIDPipe) customerId: string,
+    @Param("receiptId", ParseUUIDPipe) receiptId: string,
+    @Body() body: VoidPaymentDto,
+    @Req() req: AuthRequest,
+  ) {
+    return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
+      const before = await tx.customerPayment.findUnique({
+        where: { id: receiptId },
+        include: { payments: true, excess: true },
+      });
+      if (!before || before.customerId !== customerId)
+        throw new NotFoundException("Cobro no encontrado.");
+      if (before.voidedAt) return before;
+      if (
+        await tx.customerCredit.count({
+          where: {
+            kind: "OVERPAY",
+            voidedAt: null,
+            orderId: { in: before.payments.map((p) => p.orderId) },
+          },
+        })
+      )
+        throw new ConflictException(
+          "Parte de este cobro se pasó a la cuenta del cliente; anula primero ese movimiento.",
+        );
+      if (
+        before.excess &&
+        !before.excess.voidedAt &&
+        before.excess.amount.gt(await accountBalance(tx, customerId))
+      )
+        throw new ConflictException(
+          "El saldo a favor de este cobro ya se usó; anula primero los pagos hechos con él.",
+        );
+      const data = { voidedAt: new Date(), voidReason: body.reason };
+      await tx.payment.updateMany({
+        where: { customerPaymentId: receiptId, voidedAt: null },
+        data,
+      });
+      await tx.customerCredit.updateMany({
+        where: { customerPaymentId: receiptId, voidedAt: null },
+        data,
+      });
+      await tx.order.updateMany({
+        where: { id: { in: before.payments.map((p) => p.orderId) } },
+        data: { version: { increment: 1 } },
+      });
+      const after = await tx.customerPayment.update({
+        where: { id: receiptId },
+        data,
+      });
+      await audit(
+        tx,
+        req.actor.id,
+        "CustomerPayment",
+        receiptId,
+        "VOID",
+        before,
+        after,
+      );
+      return after;
     });
   }
   // Who owes us, across every cycle, and who has money with us.
@@ -266,6 +391,7 @@ export class AccountsController {
       owed: sum("owed"),
       account: sum("account"),
       customerPayments: true,
+      paymentSettlements: true,
     };
   }
   // Everything about one customer at a glance: what they buy, what they
@@ -415,6 +541,13 @@ export class AccountsController {
       if (before.kind === "APPLY")
         throw new BadRequestException(
           "Para deshacer un uso del saldo, anula ese pago en el encargo.",
+        );
+      if (
+        before.customerPaymentId ||
+        (before.paymentId && before.kind === "DEPOSIT")
+      )
+        throw new BadRequestException(
+          "Este saldo pertenece a un cobro. Corrige o anula el cobro completo.",
         );
       if (before.voidedAt) return before;
       if (

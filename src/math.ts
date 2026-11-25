@@ -33,6 +33,14 @@ export function serializeOrder(order: any) {
       .reduce((s: Prisma.Decimal, a: any) => s.add(a.delivered), decimal(0))
       .toString(),
     packedQuantity: decimal(item.packedQuantity ?? 0).toString(),
+    // Delivery confirms preparation, even without an earlier manual tick.
+    // packedQuantity holds only undelivered preparation, so this sum is unique.
+    totalPackedQuantity: (item.allocations || [])
+      .reduce(
+        (s: Prisma.Decimal, a: any) => s.add(a.delivered),
+        decimal(item.packedQuantity ?? 0),
+      )
+      .toString(),
     quantity: item.quantity.toString(),
     unitPrice: money(item.unitPrice),
     totalAmount: item.totalAmount == null ? null : money(item.totalAmount),
@@ -60,6 +68,7 @@ export function serializeOrder(order: any) {
   return {
     ...order,
     packingQuantities: true,
+    paymentSettlements: true,
     paid: money(paid),
     balance: money(balance),
     credit: money(credit),

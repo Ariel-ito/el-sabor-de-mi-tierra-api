@@ -1,5 +1,6 @@
 import { assertQuantity, qtyText } from "./units";
 import { randomUUID } from "node:crypto";
+import { settlePayment } from "./settlement";
 import {
   BadRequestException,
   Body,
@@ -200,19 +201,42 @@ export class SalesController {
           }),
         );
         if (body.payment && decimal(body.payment.amount).gt(0)) {
-          if (decimal(body.payment.amount).gt(view.total))
+          const settlement = settlePayment(
+            body.payment.amount,
+            view.total,
+            body.payment.excessDisposition,
+          );
+          if (!body.customerId && decimal(settlement.creditAmount).gt(0))
             throw new BadRequestException(
-              "El cobro no puede superar el total de la venta.",
+              "Asigna un cliente para guardar saldo a favor.",
             );
-          await tx.payment.create({
+          const payment = await tx.payment.create({
             data: {
               id: randomUUID(),
               orderId: created.id,
-              amount: body.payment.amount,
+              amount: settlement.amount,
+              receivedAmount: settlement.receivedAmount,
+              tipAmount: settlement.tipAmount,
+              changeAmount: settlement.changeAmount,
+              excessDisposition: settlement.excessDisposition,
               method: body.payment.method,
               paidAt: soldAt,
             },
           });
+          if (decimal(settlement.creditAmount).gt(0))
+            await tx.customerCredit.create({
+              data: {
+                id: randomUUID(),
+                customerId: created.customerId,
+                kind: "DEPOSIT",
+                amount: settlement.creditAmount,
+                method: body.payment.method,
+                date: soldAt,
+                notes: "Excedente de una venta",
+                orderId: created.id,
+                paymentId: payment.id,
+              },
+            });
         }
         const after = await tx.order.findUniqueOrThrow({
           where: { id: created.id },

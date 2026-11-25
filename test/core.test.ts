@@ -112,3 +112,23 @@ test("map links and pasted coordinates give a spot", () => {
   assert.ok(!isMapsHost(new URL("https://evil.example/maps")));
   assert.ok(!isMapsHost(new URL("http://maps.app.goo.gl/abc")));
 });
+
+test("delivery implies packing without counting the same preparation twice", () => {
+  const packedTotal = (delivered: string, pendingPacked: string) =>
+    serializeOrder({
+      items: [
+        {
+          quantity: decimal("2"),
+          unitPrice: decimal("70"),
+          packedQuantity: decimal(pendingPacked),
+          allocations: [
+            { quantity: decimal("2"), delivered: decimal(delivered) },
+          ],
+        },
+      ],
+    }).items[0].totalPackedQuantity;
+  assert.equal(packedTotal("0", "2"), "2");
+  assert.equal(packedTotal("1", "1"), "2");
+  assert.equal(packedTotal("2", "0"), "2");
+  assert.equal(packedTotal("1", "0"), "1");
+});
