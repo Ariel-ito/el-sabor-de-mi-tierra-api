@@ -19,24 +19,228 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth } from "@nestjs/swagger";
 import { audit, AuthGuard, AuthRequest, Db, lockRound } from "./core";
-import { PurchaseDto, PurchasePatchDto, ReceiptDto } from "./dto";
+import {
+  PurchaseDto,
+  PurchasePatchDto,
+  PurchaseSupplierDto,
+  ReceiptDto,
+} from "./dto";
 import { allocateStock, stockLock } from "./inventory";
-import { decimal } from "./math";
+import { decimal, money } from "./math";
 import { purchaseInclude, receive } from "./purchases";
+import { directProductIds, resolvePurchaseSupplier } from "./purchase-supplier";
+import { syncComboCosts } from "./assemblies.controller";
 @ApiBearerAuth()
 @Controller()
 @UseGuards(AuthGuard)
 export class PurchasesController {
   constructor(@Inject(Db) private db: Db) {}
-  @Get("purchases") purchases(
+  @Get("purchases") async purchases(
     @Query("roundId", new ParseUUIDPipe({ optional: true })) roundId?: string,
   ) {
-    return this.db.purchase.findMany({
+    const purchases = await this.db.purchase.findMany({
       // Combos assembled from stock are not supplier purchases.
       where: { kind: "PURCHASE", ...(roundId ? { roundId } : {}) },
       include: purchaseInclude,
       orderBy: { orderedAt: "desc" },
     });
+    const commands = await this.db.auditLog.findMany({
+      where: {
+        entityType: "DirectPurchase",
+        entityId: { in: purchases.map((p) => p.id) },
+      },
+      select: { entityId: true, after: true },
+    });
+    const created = new Map(
+      commands.map((c) => [c.entityId, directProductIds(c.after)]),
+    );
+    return purchases.map((p) => ({
+      ...p,
+      createdProductIds: created.get(p.id) ?? [],
+    }));
+  }
+  // Correct attribution without replacing receipts, lot IDs or their allocations.
+  // A closed cycle also permits this metadata correction; values never change.
+  @Patch("purchases/:id/supplier") correctSupplier(
+    @Param("id", ParseUUIDPipe) id: string,
+    @Body() body: PurchaseSupplierDto,
+    @Req() req: AuthRequest,
+  ) {
+    const fingerprint = JSON.stringify(body);
+    return this.db.$transaction(
+      async (tx) => {
+        await stockLock(tx);
+        const prior = await tx.auditLog.findUnique({ where: { id: body.id } });
+        if (prior) {
+          const result = prior.after as { request: string };
+          if (
+            prior.entityType !== "PurchaseSupplierCorrection" ||
+            prior.entityId !== id ||
+            prior.actorId !== req.actor.id ||
+            result.request !== fingerprint
+          )
+            throw new ConflictException(
+              "Este identificador ya corresponde a otra corrección.",
+            );
+          return tx.purchase.findUniqueOrThrow({
+            where: { id },
+            include: purchaseInclude,
+          });
+        }
+        const current = await tx.purchase.findUnique({ where: { id } });
+        if (!current || current.kind !== "PURCHASE")
+          throw new NotFoundException("Compra no encontrada.");
+        await lockRound(tx, current.roundId);
+        await tx.$queryRaw`SELECT id FROM "Purchase" WHERE id=${id}::uuid FOR UPDATE`;
+        const before = await tx.purchase.findUniqueOrThrow({
+          where: { id },
+          include: purchaseInclude,
+        });
+        if (before.version !== body.version)
+          throw new ConflictException(
+            "La compra cambió; actualiza antes de corregir el proveedor.",
+          );
+        const supplier = await resolvePurchaseSupplier(tx, body, req.actor.id);
+        if (supplier.id === before.supplierId)
+          throw new BadRequestException("La compra ya tiene ese proveedor.");
+        const command = await tx.auditLog.findUnique({ where: { id } });
+        const created =
+          command?.entityType === "DirectPurchase"
+            ? directProductIds(command.after)
+            : [];
+        const correctedProducts: string[] = [];
+        const productChanges = [];
+        for (const productId of before.items.map((i) => i.productId).sort())
+          await tx.$queryRaw`SELECT id FROM "Product" WHERE id=${productId}::uuid FOR UPDATE`;
+        await tx.purchase.update({
+          where: { id },
+          data: { supplierId: supplier.id, version: { increment: 1 } },
+        });
+        for (const item of before.items) {
+          const product = await tx.product.findUniqueOrThrow({
+            where: { id: item.productId },
+          });
+          const moveDefault =
+            body.correctCreatedProducts &&
+            created.includes(product.id) &&
+            product.defaultSupplierId === before.supplierId;
+          if (moveDefault) {
+            const duplicate = await tx.product.findFirst({
+              where: {
+                id: { not: product.id },
+                defaultSupplierId: supplier.id,
+                name: { equals: product.name, mode: "insensitive" },
+              },
+            });
+            if (duplicate)
+              throw new ConflictException(
+                `${product.name} ya existe con ${supplier.name}. Revisa el catálogo antes de cambiarlo.`,
+              );
+            await tx.product.update({
+              where: { id: product.id },
+              data: { defaultSupplierId: supplier.id },
+            });
+            correctedProducts.push(product.id);
+          }
+          const defaultId = moveDefault
+            ? supplier.id
+            : product.defaultSupplierId;
+          const dates = before.receipts
+            .filter((r) => r.items.some((l) => l.purchaseItemId === item.id))
+            .map((r) => r.receivedAt.getTime());
+          const cursor = product.costEffectiveAt?.getTime();
+          const syncCost =
+            moveDefault ||
+            dates.some((d) => d === cursor) ||
+            (defaultId === supplier.id &&
+              dates.some((d) => cursor == null || d >= cursor));
+          if (syncCost) {
+            const latest = await tx.receiptItem.findFirst({
+              where: {
+                purchaseItem: {
+                  productId: product.id,
+                  purchase: { kind: "PURCHASE", supplierId: defaultId },
+                },
+              },
+              include: { receipt: true },
+              orderBy: [
+                { receipt: { receivedAt: "desc" } },
+                { receipt: { createdAt: "desc" } },
+                { id: "desc" },
+              ],
+            });
+            // Without another invoice, keep the estimate but stop presenting it
+            // as an actual price confirmed for the habitual supplier.
+            await tx.product.update({
+              where: { id: product.id },
+              data: latest
+                ? {
+                    estimatedCost: money(latest.effectiveUnitCost),
+                    costEffectiveAt: latest.receipt.receivedAt,
+                  }
+                : { costEffectiveAt: null },
+            });
+          }
+          const afterProduct = await tx.product.findUniqueOrThrow({
+            where: { id: product.id },
+          });
+          if (moveDefault || syncCost) {
+            await audit(
+              tx,
+              req.actor.id,
+              "Product",
+              product.id,
+              "CORRECT_PURCHASE_SUPPLIER",
+              product,
+              afterProduct,
+            );
+            productChanges.push({
+              id: product.id,
+              before: product,
+              after: afterProduct,
+            });
+          }
+        }
+        const combos = await tx.productComponent.findMany({
+          where: { componentId: { in: before.items.map((i) => i.productId) } },
+        });
+        await syncComboCosts(tx, [...new Set(combos.map((c) => c.comboId))]);
+        const after = await tx.purchase.findUniqueOrThrow({
+          where: { id },
+          include: purchaseInclude,
+        });
+        await audit(
+          tx,
+          req.actor.id,
+          "Purchase",
+          id,
+          "CORRECT_SUPPLIER",
+          before,
+          after,
+        );
+        await tx.auditLog.create({
+          data: {
+            id: body.id,
+            actorId: req.actor.id,
+            entityType: "PurchaseSupplierCorrection",
+            entityId: id,
+            action: "UPDATE",
+            before: { supplierId: before.supplierId, version: before.version },
+            after: JSON.parse(
+              JSON.stringify({
+                request: fingerprint,
+                reason: body.reason.trim(),
+                supplierId: supplier.id,
+                correctedProducts,
+                productChanges,
+              }),
+            ),
+          },
+        });
+        return after;
+      },
+      { timeout: 30000 },
+    );
   }
   @Post("purchases") createPurchase(
     @Body() body: PurchaseDto,

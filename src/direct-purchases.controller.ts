@@ -16,6 +16,7 @@ import { DirectPurchaseDto } from "./dto";
 import { allocateStock, stockLock } from "./inventory";
 import { purchaseInclude, receive } from "./purchases";
 import { assertQuantity } from "./units";
+import { resolvePurchaseSupplier } from "./purchase-supplier";
 
 @ApiBearerAuth()
 @Controller()
@@ -64,45 +65,7 @@ export class DirectPurchasesController {
           };
         }
         await lockRound(tx, body.roundId);
-        let supplierId = body.supplierId;
-        if (body.newSupplier) {
-          const { withProducts: _, ...data } = body.newSupplier;
-          const name = data.name.trim(),
-            region = data.region.trim();
-          if (!name || !region)
-            throw new BadRequestException(
-              "Completa nombre y región del proveedor.",
-            );
-          if (
-            await tx.supplier.findFirst({
-              where: {
-                name: { equals: name, mode: "insensitive" },
-                region: { equals: region, mode: "insensitive" },
-              },
-            })
-          )
-            throw new ConflictException(
-              "Ese proveedor ya existe. Selecciónalo de la lista.",
-            );
-          const supplier = await tx.supplier.create({
-            data: { ...data, name, region },
-          });
-          supplierId = supplier.id;
-          await audit(
-            tx,
-            req.actor.id,
-            "Supplier",
-            supplier.id,
-            "CREATE",
-            null,
-            supplier,
-          );
-        }
-        const supplier = await tx.supplier.findUnique({
-          where: { id: supplierId! },
-        });
-        if (!supplier || !supplier.active)
-          throw new BadRequestException("Selecciona un proveedor activo.");
+        const supplier = await resolvePurchaseSupplier(tx, body, req.actor.id);
         const productIds: string[] = [];
         const lines: {
           productId: string;

@@ -391,6 +391,19 @@ export class PurchasePatchDto {
   @Type(() => PurchaseLineDto)
   items!: PurchaseLineDto[];
 }
+export class PurchaseSupplierDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() supplierId?: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @ValidateNested()
+  @Type(() => SupplierDto)
+  newSupplier?: SupplierDto;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsBoolean()
+  correctCreatedProducts?: boolean;
+  @IsString() @MinLength(1) @MaxLength(500) @Matches(/\S/) reason!: string;
+}
 export class ReceiptLineDto {
   @IsUUID() purchaseItemId!: string;
   @Matches(QUANTITY) quantity!: string;

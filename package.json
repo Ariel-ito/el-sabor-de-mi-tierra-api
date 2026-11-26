@@ -19,7 +19,8 @@
     "test:settlements": "python3 test/settlements.py",
     "test:price-trends": "python3 test/price-trends.py",
     "test:order-batches": "python3 test/order-batches.py",
-    "test:direct-purchases": "python3 test/direct-purchases.py"
+    "test:direct-purchases": "python3 test/direct-purchases.py",
+    "test:purchase-suppliers": "python3 test/purchase-suppliers.py"
   },
   "engines": {
     "node": ">=20.19 <25"

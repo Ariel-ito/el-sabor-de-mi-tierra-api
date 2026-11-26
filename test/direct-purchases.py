@@ -34,6 +34,7 @@ def products():return good('GET','/products')
 def cash():return D(good('GET','/finance/summary')['position']['cash'])
 path='/purchases/direct'
 first=body([new_line('Crema facial','3','60'),new_line('Crema manos','2','80')])
+first['items'][0]['newProduct']['unit']='frasco'
 first['items'][0]['newProduct']['description']='  Crema hidratante de 250 ml.\nPara piel sensible.  '
 first['items'][0]['unitDiscount']='5';first['globalDiscount']='5';first['invoice']='FAC '+tag
 before=cash()
@@ -44,6 +45,7 @@ check(sorted(data['replayed'] for _,data in results)==[False,True],'direct purch
 result=results[0][1];p=result['purchase'];supplier=p['supplierId']
 created=result['createdProducts'];facial=next(p for p in created if p['name'].startswith('Crema facial'));hands=next(p for p in created if p['name'].startswith('Crema manos'))
 description='Crema hidratante de 250 ml.\nPara piel sensible.'
+check(facial['unit']=='frasco' and hands['unit']=='bote','jars and tubs are distinct product units in the same received purchase')
 check(facial['description']==description and hands['description'] is None,'direct purchase saves product details independently and descriptions remain optional')
 check(next(p for p in products() if p['id']==facial['id'])['description']==description,'direct-purchase description remains available in the catalog')
 check(p['id']==first['id'] and len(p['receipts'])==1 and len(p['items'])==2,'purchase and complete receipt are created together')
@@ -87,6 +89,8 @@ bad['globalDiscount']='0';repaired=good('POST',path,bad)
 check(len(repaired['createdProducts'])==1,'a rejected request can be corrected and saved with the same command ID')
 fraction=body([new_line('Fracción inválida','0.5')],supplier)
 check(call('POST',path,fraction)[0]==400 and not any(p['name']=='Fracción inválida '+tag for p in products()),'non-pound fractions roll back new product creation')
+fraction['id']=uid();fraction['items'][0]['newProduct']['unit']='frasco'
+check(call('POST',path,fraction)[0]==400,'jars are counted in whole quantities too')
 duplicate=body([new_line('Crema facial')],supplier)
 check(call('POST',path,duplicate)[0]==409,'same-name product for the same supplier is selected from the catalog instead of duplicated')
 other=body([new_line('Crema facial')]);other['newSupplier']['name']='Otro proveedor crema '+tag

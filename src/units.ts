@@ -6,6 +6,7 @@ export const UNITS: Record<string, { one: string; many: string }> = {
   unidad: { one: "unidad", many: "unidades" },
   bolsa: { one: "bolsa", many: "bolsas" },
   bote: { one: "bote", many: "botes" },
+  frasco: { one: "frasco", many: "frascos" },
   botella: { one: "botella", many: "botellas" },
   paquete: { one: "paquete", many: "paquetes" },
   docena: { one: "docena", many: "docenas" },
