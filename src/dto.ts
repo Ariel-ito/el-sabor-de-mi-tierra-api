@@ -104,6 +104,11 @@ export class ProductDto {
   @MaxLength(150)
   @Matches(/\S/)
   name!: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsString()
+  @MaxLength(2000)
+  description?: string | null;
   @ApiProperty() @Matches(MONEY) salePrice!: string;
   @ApiProperty() @Matches(MONEY) estimatedCost!: string;
   @ApiProperty() @IsUUID() defaultSupplierId!: string;
@@ -136,6 +141,11 @@ export class ProductPatchDto {
   @MaxLength(150)
   @Matches(/\S/)
   name?: string;
+  @ApiPropertyOptional()
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsString()
+  @MaxLength(2000)
+  description?: string | null;
   @ApiPropertyOptional()
   @ValidateIf((_o, v) => v !== undefined)
   @Matches(MONEY)
@@ -411,6 +421,10 @@ export class ReceiptDto {
 
 export class DirectProductDto {
   @IsString() @MinLength(1) @MaxLength(150) @Matches(/\S/) name!: string;
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsString()
+  @MaxLength(2000)
+  description?: string | null;
   @IsIn(UNIT_KEYS) unit!: string;
   @Matches(MONEY) salePrice!: string;
   @ValidateIf((_o, v) => v !== undefined && v !== null) @IsUUID() categoryId?:

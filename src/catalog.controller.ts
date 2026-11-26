@@ -273,7 +273,7 @@ export class CatalogController {
     await this.checkCategory(body.categoryId);
     return this.product(
       await this.db.product.create({
-        data: body,
+        data: { ...body, description: body.description?.trim() || null },
         include: { defaultSupplier: true },
       }),
     );
@@ -297,7 +297,15 @@ export class CatalogController {
         throw new BadRequestException(
           "Este producto ya tiene encargos o compras; su unidad no se cambia. Crea un producto nuevo con la otra unidad.",
         );
-      await tx.product.update({ where: { id }, data: body });
+      await tx.product.update({
+        where: { id },
+        data: {
+          ...body,
+          ...(body.description !== undefined
+            ? { description: body.description?.trim() || null }
+            : {}),
+        },
+      });
       // A combo's cost comes from its recipe; a component's cost feeds the
       // combos that use it.
       await syncComboCosts(tx, [id]);

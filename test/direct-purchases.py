@@ -34,6 +34,7 @@ def products():return good('GET','/products')
 def cash():return D(good('GET','/finance/summary')['position']['cash'])
 path='/purchases/direct'
 first=body([new_line('Crema facial','3','60'),new_line('Crema manos','2','80')])
+first['items'][0]['newProduct']['description']='  Crema hidratante de 250 ml.\nPara piel sensible.  '
 first['items'][0]['unitDiscount']='5';first['globalDiscount']='5';first['invoice']='FAC '+tag
 before=cash()
 with ThreadPoolExecutor(max_workers=2) as pool:
@@ -42,6 +43,9 @@ check(all(status==201 for status,_ in results),'concurrent retries both return a
 check(sorted(data['replayed'] for _,data in results)==[False,True],'direct purchase command is applied once')
 result=results[0][1];p=result['purchase'];supplier=p['supplierId']
 created=result['createdProducts'];facial=next(p for p in created if p['name'].startswith('Crema facial'));hands=next(p for p in created if p['name'].startswith('Crema manos'))
+description='Crema hidratante de 250 ml.\nPara piel sensible.'
+check(facial['description']==description and hands['description'] is None,'direct purchase saves product details independently and descriptions remain optional')
+check(next(p for p in products() if p['id']==facial['id'])['description']==description,'direct-purchase description remains available in the catalog')
 check(p['id']==first['id'] and len(p['receipts'])==1 and len(p['items'])==2,'purchase and complete receipt are created together')
 check(D(p['receipts'][0]['total'])==320 and cash()-before==-320,'all discounts reconcile with the invoice and cash exactly once')
 check(len([s for s in good('GET','/suppliers') if s['name']=='Proveedor directo '+tag])==1 and p['supplier']['phoneCountryCode']=='+504','supplier is created once with Honduras defaults')
@@ -61,6 +65,7 @@ m=good('POST',path,mixed)
 check(D(m['purchase']['receipts'][0]['total'])==130 and len(m['createdProducts'])==1,'existing and new products can share one received purchase')
 current=next(p for p in products() if p['id']==facial['id'])
 check(D(current['estimatedCost'])==60 and D(current['salePrice'])==100,'repeat purchase updates cost without changing the existing sale price')
+check(current['description']==description,'buying an existing product preserves its description')
 check(m['purchase']['receipts'][0]['invoice']=='Compra directa','missing invoice number keeps an explicit direct-purchase reference')
 alt=body([{'productId':facial['id'],'quantity':'1','unitCost':'99','unitDiscount':'0'}]);alt['newSupplier']['name']='Proveedor alterno directo '+tag
 good('POST',path,alt)
@@ -94,4 +99,18 @@ both_line=body([new_line('Producto ambiguo')],supplier);both_line['items'][0]['p
 check(call('POST',path,both_line)[0]==400,'existing and new product cannot be chosen simultaneously')
 stats=next(c for c in good('GET','/statistics')['cycles'] if c['id']==r['id'])
 check(any(p['productId']==facial['id'] for p in stats['productPrices']),'direct receipts participate in cycle price history')
+catalog_body={'name':'Producto con detalles '+tag,'description':'  Presentación de 100 ml.\nUso externo.  ','unit':'bote','salePrice':'100','estimatedCost':'60','defaultSupplierId':supplier}
+catalog=good('POST','/products',catalog_body)
+check(catalog['description']=='Presentación de 100 ml.\nUso externo.','catalog creation saves a trimmed multiline description')
+catalog_path='/products/'+catalog['id']
+check(good('PATCH',catalog_path,{'salePrice':'105'})['description']==catalog['description'],'editing other fields preserves an omitted description')
+edited=good('PATCH',catalog_path,{'description':'  Nueva presentación de 150 ml.  '})
+check(edited['description']=='Nueva presentación de 150 ml.','catalog description can be edited independently')
+check(good('PATCH',catalog_path,{'description':'   '})['description'] is None,'an empty description clears saved details')
+good('PATCH',catalog_path,{'description':'Detalle temporal'})
+check(good('PATCH',catalog_path,{'description':None})['description'] is None,'an explicit null clears the description')
+for value in [123,'x'*2001]:
+    check(call('PATCH',catalog_path,{'description':value})[0]==400,'invalid catalog descriptions are rejected')
+    invalid=body([new_line('Descripción inválida')],supplier);invalid['items'][0]['newProduct']['description']=value
+    check(call('POST',path,invalid)[0]==400,'invalid direct-purchase descriptions are rejected before receipt creation')
 print(json.dumps({'checks':len(checks),'roundId':r['id'],'round':r['name'],'supplier':p['supplier']['name']},ensure_ascii=False))

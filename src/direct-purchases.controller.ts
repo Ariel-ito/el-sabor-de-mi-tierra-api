@@ -167,6 +167,7 @@ export class DirectPurchasesController {
             const created = await tx.product.create({
               data: {
                 name,
+                description: p.description?.trim() || null,
                 unit: p.unit,
                 salePrice: p.salePrice,
                 estimatedCost: line.unitCost,
