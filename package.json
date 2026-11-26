@@ -18,7 +18,8 @@
     "test:packing": "python3 test/packing.py",
     "test:settlements": "python3 test/settlements.py",
     "test:price-trends": "python3 test/price-trends.py",
-    "test:order-batches": "python3 test/order-batches.py"
+    "test:order-batches": "python3 test/order-batches.py",
+    "test:direct-purchases": "python3 test/direct-purchases.py"
   },
   "engines": {
     "node": ">=20.19 <25"

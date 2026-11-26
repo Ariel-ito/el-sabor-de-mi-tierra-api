@@ -14,6 +14,7 @@ import { PackingController } from "./packing.controller";
 import { OrdersController } from "./orders.controller";
 import { OrderBatchesController } from "./order-batches.controller";
 import { PurchasesController } from "./purchases.controller";
+import { DirectPurchasesController } from "./direct-purchases.controller";
 import { RoundsController } from "./rounds.controller";
 import { SettingsController } from "./settings.controller";
 import { SalesController } from "./sales.controller";
@@ -30,6 +31,7 @@ import { SalesController } from "./sales.controller";
     PackingController,
     InventoryController,
     PurchasesController,
+    DirectPurchasesController,
     SalesController,
     FinanceController,
     AccountsController,

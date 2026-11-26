@@ -409,6 +409,68 @@ export class ReceiptDto {
   items!: ReceiptLineDto[];
 }
 
+export class DirectProductDto {
+  @IsString() @MinLength(1) @MaxLength(150) @Matches(/\S/) name!: string;
+  @IsIn(UNIT_KEYS) unit!: string;
+  @Matches(MONEY) salePrice!: string;
+  @ValidateIf((_o, v) => v !== undefined && v !== null) @IsUUID() categoryId?:
+    string | null;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(60)
+  @Matches(/\S/)
+  categoryName?: string;
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsInt()
+  @Min(1)
+  @Max(3650)
+  shelfLifeDays?: number | null;
+  @ValidateIf((_o, v) => v !== undefined && v !== null)
+  @IsInt()
+  @Min(0)
+  @Max(365)
+  warnDays?: number | null;
+}
+export class DirectPurchaseLineDto {
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() productId?: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @ValidateNested()
+  @Type(() => DirectProductDto)
+  newProduct?: DirectProductDto;
+  @Matches(QUANTITY) quantity!: string;
+  @Matches(MONEY) unitCost!: string;
+  @Matches(MONEY) unitDiscount!: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsDateString({ strict: true })
+  expiresAt?: string;
+}
+export class DirectPurchaseDto {
+  @IsUUID() id!: string;
+  @IsUUID() roundId!: string;
+  @IsDateString({ strict: true }) purchasedAt!: string;
+  @ValidateIf((_o, v) => v !== undefined) @IsUUID() supplierId?: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @ValidateNested()
+  @Type(() => SupplierDto)
+  newSupplier?: SupplierDto;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(150)
+  invoice?: string;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+  @Matches(MONEY) globalDiscount!: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested()
+  @Type(() => DirectPurchaseLineDto)
+  items!: DirectPurchaseLineDto[];
+}
+
 export class PaymentDto {
   @IsUUID() id!: string;
   @IsInt() @Min(1) version!: number;
