@@ -146,6 +146,13 @@ La migración `202610300001_packing_quantities` conserva las marcas anteriores h
 Prueba local específica: `npm run test:packing` (requiere las mismas variables `DAIRY_TEST_*` y una base desechable).
 
 
+### Acciones rápidas y en grupo
+
+`POST /orders/batch-operations` recibe `{ id, action, date, method, orders: [{ id, version, method?, items?: [{orderItemId, quantity}] }] }` para 1–50 encargos o ventas. `PACK` marca lo disponible como empacado, `DELIVER` entrega lo disponible e implica su empaque, `PAY` cobra solo el saldo pendiente y `COMPLETE` combina esa entrega y el pago completo del saldo. Empaque y entrega pueden quedar parciales: producto no recibido nunca se marca como preparado ni entregado. Un encargo sin producto disponible conserva sus pendientes; solo se registra el pago si la acción lo incluye. Las formas de pago son efectivo o transferencia y se pueden indicar por encargo. No agrega abonos de nuevo, no usa automáticamente saldo a favor y no crea pagos cuando el saldo es cero. La web incluye las cantidades revisadas: una recepción posterior no añade producto a la entrega sin una nueva revisión. Si esas cantidades ya no están disponibles, se rechaza toda la transacción. Sin `items`, se deriva la cantidad disponible en la fecha indicada.
+
+El comando adquiere el bloqueo de inventario y valida todas las versiones y disponibilidades antes de registrar cambios; es una sola transacción para toda la selección. El UUID se guarda como clave única en la auditoría, con una huella de la solicitud, para resolver reintentos y rechazar su reutilización con otros datos. Empaques, entregas y pagos conservan sus auditorías individuales. Los registros fechados hacia atrás asignan inventario con la misma fecha para cada encargo seleccionado. `serializeOrder` anuncia `batchOperations: true`. `npm run test:order-batches` requiere el API y base locales con credenciales `DAIRY_TEST_EMAIL` y `DAIRY_TEST_PASSWORD`.
+
+
 ### Sobrantes de pagos y balance actual
 
 `GET /payment-options`, `GET /collections` y los encargos serializados anuncian `paymentSettlements: true`. Los abonos individuales, pagos generales FIFO y cobros al crear ventas aceptan `excessDisposition: TIP | CREDIT | CHANGE` cuando el monto recibido supera el saldo. Debe indicarse explícitamente; `excessToAccount` sigue funcionando como CREDIT para clientes anteriores. El pago aplicado nunca supera la deuda: la propina es ingreso separado en la categoría automática TIPS, CREDIT crea un depósito y CHANGE registra lo ya devuelto, sin aumentar caja. `receivedAmount` conserva el dinero entregado en cobros individuales. Las propinas no cambian ventas ni márgenes de los productos; `/statistics` las informa aparte en `tips`.

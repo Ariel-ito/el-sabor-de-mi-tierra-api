@@ -431,6 +431,37 @@ export class CustomerDebtVersionDto {
   @IsUUID() id!: string;
   @IsInt() @Min(1) version!: number;
 }
+export class BatchOrderLineDto {
+  @IsUUID() orderItemId!: string;
+  @IsString() @Matches(/^\d{1,9}(\.\d{1,3})?$/) quantity!: string;
+}
+export class BatchOrderDto {
+  @IsUUID() id!: string;
+  @IsInt() @Min(1) version!: number;
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsIn(["CASH", "TRANSFER"])
+  method?: "CASH" | "TRANSFER";
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(100)
+  @ValidateNested({ each: true })
+  @Type(() => BatchOrderLineDto)
+  items?: BatchOrderLineDto[];
+}
+export class OrderBatchDto {
+  @IsUUID() id!: string;
+  @IsIn(["PACK", "DELIVER", "PAY", "COMPLETE"])
+  action!: "PACK" | "DELIVER" | "PAY" | "COMPLETE";
+  @IsDateString({ strict: true }) date!: string;
+  @IsIn(["CASH", "TRANSFER"]) method!: "CASH" | "TRANSFER";
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => BatchOrderDto)
+  orders!: BatchOrderDto[];
+}
 export class CustomerPaymentDto {
   @IsUUID() id!: string;
   @Matches(MONEY) amount!: string;

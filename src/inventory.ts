@@ -88,7 +88,12 @@ export async function inventory(tx: Prisma.TransactionClient, at = new Date()) {
 // buying elsewhere never strands an encargo nor steals a supplier's own lots.
 export async function allocateStock(
   tx: Prisma.TransactionClient,
-  operation: { orderId?: string; at?: Date; requireStock?: boolean } = {},
+  operation: {
+    orderId?: string;
+    at?: Date;
+    requireStock?: boolean;
+    orderDates?: ReadonlyMap<string, Date>;
+  } = {},
 ) {
   const items = await tx.orderItem.findMany({
     include: {
@@ -99,7 +104,8 @@ export async function allocateStock(
   });
   const now = new Date();
   const dateFor = (item: (typeof items)[number]) =>
-    operation.orderId === item.orderId && operation.at ? operation.at : now;
+    operation.orderDates?.get(item.orderId) ??
+    (operation.orderId === item.orderId && operation.at ? operation.at : now);
   // Release only undelivered stock that cannot be used at the operation date.
   // Keep delivered quantities attached to the original lot for traceability.
   for (const item of items) {

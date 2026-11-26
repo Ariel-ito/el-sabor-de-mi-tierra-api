@@ -69,6 +69,7 @@ export function serializeOrder(order: any) {
     ...order,
     packingQuantities: true,
     paymentSettlements: true,
+    batchOperations: true,
     paid: money(paid),
     balance: money(balance),
     credit: money(credit),

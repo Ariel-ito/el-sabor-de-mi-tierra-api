@@ -12,6 +12,7 @@ import { InventoryController } from "./inventory.controller";
 import { NoticesController } from "./notices.controller";
 import { PackingController } from "./packing.controller";
 import { OrdersController } from "./orders.controller";
+import { OrderBatchesController } from "./order-batches.controller";
 import { PurchasesController } from "./purchases.controller";
 import { RoundsController } from "./rounds.controller";
 import { SettingsController } from "./settings.controller";
@@ -25,6 +26,7 @@ import { SalesController } from "./sales.controller";
     DatesController,
     NoticesController,
     OrdersController,
+    OrderBatchesController,
     PackingController,
     InventoryController,
     PurchasesController,
