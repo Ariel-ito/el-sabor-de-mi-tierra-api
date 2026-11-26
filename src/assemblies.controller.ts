@@ -72,6 +72,7 @@ export class AssembliesController {
     @Req() req: AuthRequest,
   ) {
     return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
       const combo = await tx.product.findUnique({
         where: { id },
         include: { components: true, usedIn: true },

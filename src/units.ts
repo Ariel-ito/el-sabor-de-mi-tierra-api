@@ -13,6 +13,19 @@ export const UNITS: Record<string, { one: string; many: string }> = {
   carton: { one: "cartón", many: "cartones" },
 };
 export const UNIT_KEYS = Object.keys(UNITS);
+// Relabel one counted piece/package without converting quantity or price.
+// Weight and dozens have different scales and need a separate product.
+const PIECE_UNITS = new Set([
+  "unidad",
+  "bolsa",
+  "bote",
+  "frasco",
+  "botella",
+  "paquete",
+  "carton",
+]);
+export const isUnitLabelCorrection = (from: string, to: string) =>
+  PIECE_UNITS.has(from) && PIECE_UNITS.has(to);
 export const qtyText = (quantity: Prisma.Decimal.Value, unit = "lb") => {
   const q = new Prisma.Decimal(quantity);
   const u = UNITS[unit] ?? UNITS.lb;
@@ -33,6 +46,9 @@ export async function checkQuantities(
   tx: Prisma.TransactionClient,
   lines: { productId: string; quantity: Prisma.Decimal.Value }[],
 ) {
+  // A catalog correction must not race a purchase validated in the old unit.
+  for (const id of [...new Set(lines.map((l) => l.productId))].sort())
+    await tx.$queryRaw`SELECT id FROM "Product" WHERE id=${id}::uuid FOR UPDATE`;
   const products = await tx.product.findMany({
     where: { id: { in: lines.map((l) => l.productId) } },
   });

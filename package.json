@@ -20,7 +20,8 @@
     "test:price-trends": "python3 test/price-trends.py",
     "test:order-batches": "python3 test/order-batches.py",
     "test:direct-purchases": "python3 test/direct-purchases.py",
-    "test:purchase-suppliers": "python3 test/purchase-suppliers.py"
+    "test:purchase-suppliers": "python3 test/purchase-suppliers.py",
+    "test:product-units": "python3 test/product-units.py"
   },
   "engines": {
     "node": ">=20.19 <25"

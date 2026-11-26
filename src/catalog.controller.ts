@@ -25,6 +25,8 @@ import {
 } from "./dto";
 import { syncComboCosts } from "./assemblies.controller";
 import { money } from "./math";
+import { stockLock } from "./inventory";
+import { isUnitLabelCorrection } from "./units";
 @ApiBearerAuth()
 @Controller()
 @UseGuards(AuthGuard)
@@ -285,18 +287,38 @@ export class CatalogController {
   ) {
     await this.checkCategory(body.categoryId);
     return this.db.$transaction(async (tx) => {
+      await stockLock(tx);
       await tx.$queryRaw`SELECT id FROM "Product" WHERE id=${id}::uuid FOR UPDATE`;
       const before = await tx.product.findUniqueOrThrow({ where: { id } });
-      // Quantities already recorded would change meaning.
-      if (
-        body.unit &&
-        body.unit !== before.unit &&
-        ((await tx.orderItem.count({ where: { productId: id } })) ||
-          (await tx.purchaseItem.count({ where: { productId: id } })))
-      )
-        throw new BadRequestException(
-          "Este producto ya tiene encargos o compras; su unidad no se cambia. Crea un producto nuevo con la otra unidad.",
-        );
+      if (body.unit && body.unit !== before.unit) {
+        if (await tx.orderItem.count({ where: { productId: id } }))
+          throw new BadRequestException(
+            "Este producto ya tiene ventas o encargos. Crea un producto nuevo para usar otra unidad.",
+          );
+        if (
+          await tx.productComponent.count({
+            where: { OR: [{ comboId: id }, { componentId: id }] },
+          })
+        )
+          throw new BadRequestException(
+            "Este producto forma parte de un combo. Revisa su receta antes de cambiar la unidad.",
+          );
+        if (
+          await tx.stockWithdrawal.count({
+            where: { receiptItem: { purchaseItem: { productId: id } } },
+          })
+        )
+          throw new BadRequestException(
+            "Este producto ya tiene salidas de inventario registradas. Crea un producto nuevo para usar otra unidad.",
+          );
+        if (
+          (await tx.purchaseItem.count({ where: { productId: id } })) &&
+          !isUnitLabelCorrection(before.unit, body.unit)
+        )
+          throw new BadRequestException(
+            "Este producto tiene compras. Puedes corregir una presentación por pieza (por ejemplo, bote a frasco), pero cambiar libras o docenas requiere otro producto porque sus cantidades tienen otra escala.",
+          );
+      }
       await tx.product.update({
         where: { id },
         data: {
