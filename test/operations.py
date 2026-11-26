@@ -129,7 +129,7 @@ check(call('POST',f"/rounds/{r3['id']}/close",{'decisions':[]})[0]==409,'a close
 # without taking lots from a supplier's own encargos first.
 sA=good('POST','/suppliers',{'name':'Proveedor A '+u,'region':'Olancho'})
 sB=good('POST','/suppliers',{'name':'Proveedor B '+u,'region':'Sur'})
-pq=good('POST','/products',{'name':'Quesillo cruzado '+u,'salePrice':'75','estimatedCost':'50','defaultSupplierId':sA['id']})
+pq=good('POST','/products',{'name':'Quesillo cruzado '+u,'salePrice':'75','estimatedCost':'50','defaultSupplierId':sB['id']})
 r4=good('POST','/rounds',{'name':'Proveedor cruzado '+u,'opensAt':'2026-09-29T00:00:00Z','closesAt':'2026-10-04T00:00:00Z'})
 oa=good('POST','/orders',{'roundId':r4['id'],'customerId':c['id'],'items':[{'productId':pq['id'],'supplierId':sA['id'],'quantity':'2','unitPrice':'75'}]})
 ob=good('POST','/orders',{'roundId':r4['id'],'customerId':c['id'],'items':[{'productId':pq['id'],'supplierId':sB['id'],'quantity':'1','unitPrice':'75'}]})

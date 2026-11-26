@@ -2,6 +2,34 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { audit } from "./core";
 import { SupplierDto } from "./dto";
+import { checkQuantities } from "./units";
+
+export function assertProductSupplier(
+  product: { name: string; defaultSupplierId: string },
+  supplierId: string,
+) {
+  if (product.defaultSupplierId !== supplierId)
+    throw new BadRequestException(
+      `${product.name} no pertenece al proveedor de esta compra. Selecciona un producto de ese proveedor o corrige su proveedor en el catálogo.`,
+    );
+}
+
+export async function checkPurchaseProducts(
+  tx: Prisma.TransactionClient,
+  supplierId: string,
+  lines: { productId: string; quantity: Prisma.Decimal.Value }[],
+) {
+  await checkQuantities(tx, lines);
+  const products = await tx.product.findMany({
+    where: { id: { in: lines.map((l) => l.productId) } },
+  });
+  for (const line of lines) {
+    const product = products.find((p) => p.id === line.productId);
+    if (!product)
+      throw new BadRequestException("Un producto de la compra ya no existe.");
+    assertProductSupplier(product, supplierId);
+  }
+}
 
 export async function resolvePurchaseSupplier(
   tx: Prisma.TransactionClient,

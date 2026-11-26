@@ -21,7 +21,8 @@
     "test:order-batches": "python3 test/order-batches.py",
     "test:direct-purchases": "python3 test/direct-purchases.py",
     "test:purchase-suppliers": "python3 test/purchase-suppliers.py",
-    "test:product-units": "python3 test/product-units.py"
+    "test:product-units": "python3 test/product-units.py",
+    "test:purchase-products": "python3 test/purchase-products.py"
   },
   "engines": {
     "node": ">=20.19 <25"

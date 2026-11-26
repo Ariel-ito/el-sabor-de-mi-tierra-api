@@ -1,4 +1,4 @@
-import { checkQuantities, qtyText } from "./units";
+import { qtyText } from "./units";
 import {
   BadRequestException,
   Body,
@@ -28,7 +28,11 @@ import {
 import { allocateStock, stockLock } from "./inventory";
 import { decimal, money } from "./math";
 import { purchaseInclude, receive } from "./purchases";
-import { directProductIds, resolvePurchaseSupplier } from "./purchase-supplier";
+import {
+  checkPurchaseProducts,
+  directProductIds,
+  resolvePurchaseSupplier,
+} from "./purchase-supplier";
 import { syncComboCosts } from "./assemblies.controller";
 @ApiBearerAuth()
 @Controller()
@@ -201,6 +205,7 @@ export class PurchasesController {
             });
           }
         }
+        await checkPurchaseProducts(tx, supplier.id, before.items);
         const combos = await tx.productComponent.findMany({
           where: { componentId: { in: before.items.map((i) => i.productId) } },
         });
@@ -270,7 +275,7 @@ export class PurchasesController {
         new Set(body.items.map((i) => i.productId)).size !== body.items.length
       )
         throw new BadRequestException("Producto repetido");
-      await checkQuantities(tx, body.items);
+      await checkPurchaseProducts(tx, body.supplierId, body.items);
       const after = await tx.purchase.create({
         data: {
           id: body.id,
@@ -326,7 +331,7 @@ export class PurchasesController {
         new Set(body.items.map((i) => i.productId)).size !== body.items.length
       )
         throw new BadRequestException("Producto repetido");
-      await checkQuantities(tx, body.items);
+      await checkPurchaseProducts(tx, before.supplierId, body.items);
       const received = (itemId: string) =>
         before.receipts
           .flatMap((r) => r.items)

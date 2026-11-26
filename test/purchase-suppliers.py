@@ -63,15 +63,20 @@ def correction(p,supplier,**extra):return {'id':uid(),'version':p['version'],'su
 check(call('PATCH',path,correction(corrected,inactive['id']))[0]==400,'inactive suppliers cannot be assigned')
 check(call('PATCH',path,correction(corrected,amazon))[0]==400,'selecting the same supplier is rejected')
 check(call('PATCH',path,{**correction(corrected,wrong['id']),'newSupplier':{'name':'Ambiguo','region':'Local'}})[0]==400,'ambiguous existing-and-new suppliers are rejected')
-# Existing products retain their habitual supplier; removing a mistaken current
-# invoice restores the latest actual invoice for that supplier.
+# Existing catalog products cannot be attributed to an unrelated supplier.
 prior=direct([existing(product['id'],'120')],amazon,now+timedelta(minutes=1))
 mistake=direct([existing(product['id'],'160')],amazon,now+timedelta(minutes=2))['purchase']
 third=good('POST','/suppliers',{'name':'Tercer proveedor '+tag,'region':'Local'})
 check(D(catalog(product['id'])['estimatedCost'])==160,'fixture has the latest mistaken invoice cost')
-fixed=good('PATCH','/purchases/'+mistake['id']+'/supplier',correction(mistake,third['id']))
-check(catalog(product['id'])['defaultSupplierId']==amazon and D(catalog(product['id'])['estimatedCost'])==120,'correction of an existing product preserves its habitual supplier and restores its previous invoice cost')
-check(fixed['receipts']==mistake['receipts'],'cost provenance changes do not alter actual receipt costs')
+check(call('PATCH','/purchases/'+mistake['id']+'/supplier',correction(mistake,third['id']))[0]==400,'supplier correction cannot attach an existing product to an unrelated supplier')
+check(catalog(product['id'])['defaultSupplierId']==amazon and D(catalog(product['id'])['estimatedCost'])==160,'rejected supplier correction rolls back catalog cost changes')
+check(next(x for x in good('GET','/purchases?roundId='+r['id']) if x['id']==mistake['id'])['receipts']==mistake['receipts'],'rejected supplier correction preserves receipts')
+# A catalog attribution corrected beforehand can be propagated to its receipt.
+catalog_fix=direct([line('Producto con catálogo corregido')],wrong['id'])
+catalog_product=catalog_fix['createdProducts'][0]
+good('PATCH','/products/'+catalog_product['id'],{'defaultSupplierId':amazon})
+aligned=good('PATCH','/purchases/'+catalog_fix['purchase']['id']+'/supplier',correction(catalog_fix['purchase'],amazon,correctCreatedProducts=False))
+check(aligned['supplierId']==amazon,'supplier correction accepts products already associated with the destination supplier')
 # A name conflict rolls back every change, including the purchase attribution.
 conflict=good('POST','/products',{'name':initial['createdProducts'][1]['name'],'salePrice':'100','estimatedCost':'60','defaultSupplierId':third['id'],'unit':'bote'})
 snapshot=copy.deepcopy(listed)
@@ -80,8 +85,9 @@ check(next(x for x in good('GET','/purchases?roundId='+r['id']) if x['id']==p['i
 # Closed cycles still permit attribution-only fixes.
 leftovers=[l for l in good('GET','/inventory') if l['roundId']==r['id'] and D(l['available'])>0]
 good('POST','/rounds/'+r['id']+'/close',{'decisions':[{'receiptItemId':l['id'],'quantity':l['available'],'reason':'KEEP'} for l in leftovers]})
-current=next(x for x in good('GET','/purchases?roundId='+r['id']) if x['id']==mistake['id'])
-closed=good('PATCH','/purchases/'+mistake['id']+'/supplier',correction(current,wrong['id'],correctCreatedProducts=False))
-check(closed['supplierId']==wrong['id'] and closed['receipts']==current['receipts'],'metadata correction works in a closed cycle without reopening or replacing receipts')
+good('PATCH','/products/'+catalog_product['id'],{'defaultSupplierId':third['id']})
+current=next(x for x in good('GET','/purchases?roundId='+r['id']) if x['id']==aligned['id'])
+closed=good('PATCH','/purchases/'+aligned['id']+'/supplier',correction(current,third['id'],correctCreatedProducts=False))
+check(closed['supplierId']==third['id'] and closed['receipts']==current['receipts'],'metadata correction works in a closed cycle for products associated with that supplier')
 check(call('PATCH',path,{**correction(corrected,third['id']),'reason':' '})[0]==400,'a correction must include a meaningful audit reason')
 print(json.dumps({'checks':len(checks),'roundId':r['id']},ensure_ascii=False))

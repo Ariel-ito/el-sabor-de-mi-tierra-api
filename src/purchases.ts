@@ -3,6 +3,7 @@ import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { decimal, money, lineTotal } from "./math";
 import { ReceiptDto } from "./dto";
+import { assertProductSupplier } from "./purchase-supplier";
 const DAY = 86400000;
 export const purchaseInclude = {
   supplier: true,
@@ -74,6 +75,7 @@ export async function receive(
     const line = purchase.items.find((p) => p.id === i.purchaseItemId);
     if (!line)
       throw new BadRequestException("Producto no pertenece a esta compra");
+    assertProductSupplier(line.product, purchase.supplierId);
     const prior = purchase.receipts
       .flatMap((r) => r.items)
       .filter((r) => r.purchaseItemId === line.id)

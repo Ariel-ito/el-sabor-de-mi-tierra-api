@@ -16,7 +16,10 @@ import { DirectPurchaseDto } from "./dto";
 import { allocateStock, stockLock } from "./inventory";
 import { purchaseInclude, receive } from "./purchases";
 import { assertQuantity } from "./units";
-import { resolvePurchaseSupplier } from "./purchase-supplier";
+import {
+  assertProductSupplier,
+  resolvePurchaseSupplier,
+} from "./purchase-supplier";
 
 @ApiBearerAuth()
 @Controller()
@@ -157,6 +160,7 @@ export class DirectPurchasesController {
             include: { components: true },
           });
           if (!product) throw new NotFoundException("Producto no encontrado.");
+          assertProductSupplier(product, supplier.id);
           if (!product.active || product.components.length)
             throw new BadRequestException(
               `${product.name}: usa un producto activo que no sea un combo armado.`,

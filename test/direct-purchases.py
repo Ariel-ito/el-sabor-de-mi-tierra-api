@@ -70,15 +70,16 @@ check(D(current['estimatedCost'])==60 and D(current['salePrice'])==100,'repeat p
 check(current['description']==description,'buying an existing product preserves its description')
 check(m['purchase']['receipts'][0]['invoice']=='Compra directa','missing invoice number keeps an explicit direct-purchase reference')
 alt=body([{'productId':facial['id'],'quantity':'1','unitCost':'99','unitDiscount':'0'}]);alt['newSupplier']['name']='Proveedor alterno directo '+tag
-good('POST',path,alt)
-check(D(next(p for p in products() if p['id']==facial['id'])['estimatedCost'])==60,'alternative supplier invoice does not overwrite habitual supplier cost')
-check(len(good('GET','/products/'+facial['id']+'/cost-history'))==3,'all receipt costs remain visible in history')
+check(call('POST',path,alt)[0]==400,'a purchase cannot include a catalog product belonging to another supplier')
+check(not any(s['name']==alt['newSupplier']['name'] for s in good('GET','/suppliers')),'supplier mismatch rolls back inline supplier creation')
+check(D(next(p for p in products() if p['id']==facial['id'])['estimatedCost'])==60,'rejected cross-supplier purchase preserves catalog cost')
+check(len(good('GET','/products/'+facial['id']+'/cost-history'))==2,'rejected cross-supplier purchases never enter cost history')
 c=good('POST','/customers',{'name':'Encargo compra directa '+tag})
 o=good('POST','/orders',{'roundId':r['id'],'customerId':c['id'],'items':[{'productId':facial['id'],'supplierId':supplier,'quantity':'6','unitPrice':'100'}]})
-fill=good('POST',path,body([{'productId':facial['id'],'quantity':'2','unitCost':'60','unitDiscount':'0'}],supplier))
+fill=good('POST',path,body([{'productId':facial['id'],'quantity':'3','unitCost':'60','unitDiscount':'0'}],supplier))
 check(D(good('GET','/orders/'+o['id'])['items'][0]['reservedQuantity'])==6,'received stock fills pending encargos immediately')
 new_lot=next(l for l in good('GET','/inventory') if l['id']==fill['purchase']['receipts'][0]['items'][0]['id'])
-check(D(new_lot['quantity'])==2 and D(new_lot['available'])==1,'only stock not needed by encargos remains free to sell')
+check(D(new_lot['quantity'])==3 and D(new_lot['available'])==1,'only stock not needed by encargos remains free to sell')
 bad=body([new_line('Producto que debe revertir')]);bad['newSupplier']['name']='Proveedor rollback '+tag
 bad['items'][0]['newProduct']['categoryName']='Categoria rollback '+tag;bad['globalDiscount']='9999'
 check(call('POST',path,bad)[0]==400,'late invoice validation can reject the whole direct purchase')
