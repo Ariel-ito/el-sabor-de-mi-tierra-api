@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { decimal } from "./math";
+import { stockFirstWithinOrders } from "./order-allocation";
 // All inventory/order mutations acquire this lock before any row locks.
 // Serializes the small private workspace and prevents overselling across cycles.
 export async function stockLock(tx: Prisma.TransactionClient) {
@@ -95,13 +96,17 @@ export async function allocateStock(
     orderDates?: ReadonlyMap<string, Date>;
   } = {},
 ) {
-  const items = await tx.orderItem.findMany({
-    include: {
-      allocations: { include: { receiptItem: { include: { receipt: true } } } },
-      order: true,
-    },
-    orderBy: [{ order: { createdAt: "asc" } }, { id: "asc" }],
-  });
+  const items = stockFirstWithinOrders(
+    await tx.orderItem.findMany({
+      include: {
+        allocations: {
+          include: { receiptItem: { include: { receipt: true } } },
+        },
+        order: true,
+      },
+      orderBy: [{ order: { createdAt: "asc" } }, { id: "asc" }],
+    }),
+  );
   const now = new Date();
   const dateFor = (item: (typeof items)[number]) =>
     operation.orderDates?.get(item.orderId) ??
